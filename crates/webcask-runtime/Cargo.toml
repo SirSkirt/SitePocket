@@ -1,0 +1,12 @@
+[package]
+name = "webcask-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+webcask-core = { path = "../webcask-core" }
+winit = "0.30"
+wry = "0.57"
+mime_guess = "2"
+percent-encoding = "2"
