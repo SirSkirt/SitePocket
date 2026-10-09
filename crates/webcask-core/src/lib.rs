@@ -17,6 +17,9 @@ pub struct InstalledApp {
     pub port: Option<u16>,
     #[serde(default)]
     pub game_focus: bool,
+    /// Relative HTML entry point, e.g. "dist/index.html". Old apps default to root.
+    #[serde(default)]
+    pub entry_path: Option<String>,
 }
 pub fn root() -> Result<PathBuf, String> {
     let path = dirs::data_local_dir().ok_or("Local application data directory unavailable")?.join("SitePocket");
@@ -55,73 +58,151 @@ pub fn install_website(name: &str, address: &str) -> Result<InstalledApp, String
         return Err("Only HTTP(S) websites without embedded credentials are supported".into());
     }
     let app = InstalledApp { id: Uuid::new_v4().to_string(), name, kind: AppKind::Online,
-        url: Some(parsed.to_string()), port: None, game_focus: false };
+        url: Some(parsed.to_string()), port: None, game_focus: false, entry_path: None };
     let mut apps = list_apps()?;
     apps.push(app.clone());
     save_apps(&apps)?;
     Ok(app)
 }
+const MAX_GAME_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_GAME_FILES: usize = 20_000;
+
+/// Import first, validate second, then publish in the registry.
+/// Source files and the original archive are never modified.
 pub fn import_game(name: &str, source: &Path) -> Result<InstalledApp, String> {
     let name = checked_name(name)?;
+    if !source.exists() {
+        return Err("Game source not found. Re-select the folder or ZIP file.".into());
+    }
     let id = Uuid::new_v4().to_string();
-    let target = app_path(&id)?.join("site");
-    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-    if let Err(e) = import_files(source, &target) {
-        let _ = fs::remove_dir_all(app_path(&id)?);
-        return Err(e);
-    }
-    if !target.join("index.html").is_file() {
-        let _ = fs::remove_dir_all(app_path(&id)?);
-        return Err("Folder or ZIP must contain index.html at its root".into());
-    }
-    let mut apps = list_apps()?;
-    let taken: Vec<u16> = apps.iter().filter_map(|a| a.port).collect();
-    let port = (41000..61000).find(|p| !taken.contains(p)).ok_or("No local port available")?;
-    let app = InstalledApp { id, name, kind: AppKind::Local, url: None, port: Some(port), game_focus: false };
-    apps.push(app.clone());
-    if let Err(e) = save_apps(&apps) {
-        let _ = fs::remove_dir_all(app_path(&app.id)?);
-        return Err(e);
-    }
-    Ok(app)
-}
-fn import_files(source: &Path, target: &Path) -> Result<(), String> {
-    const LIMIT: u64 = 2 * 1024 * 1024 * 1024;
-    const FILE_LIMIT: usize = 20_000;
-    let mut total = 0_u64;
+    let install_root = app_path(&id)?;
+    let target = install_root.join("site");
     if source.is_dir() {
-        let root = source.canonicalize().map_err(|e| e.to_string())?;
-        for (n, entry) in walkdir::WalkDir::new(&root).follow_links(false).into_iter().enumerate() {
-            if n > FILE_LIMIT { return Err("Too many game files".into()); }
-            let entry = entry.map_err(|e| e.to_string())?;
-            if entry.file_type().is_symlink() { return Err("Symlinks are not supported".into()); }
-            let relative = entry.path().strip_prefix(&root).map_err(|e| e.to_string())?;
-            let dest = target.join(relative);
-            if entry.file_type().is_dir() { fs::create_dir_all(&dest).map_err(|e| e.to_string())?; continue; }
-            if !entry.file_type().is_file() { continue; }
-            total = total.checked_add(entry.metadata().map_err(|e| e.to_string())?.len()).ok_or("Game too large")?;
-            if total > LIMIT { return Err("Game exceeds the 2 GiB import limit".into()); }
-            if let Some(parent) = dest.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
-            fs::copy(entry.path(), dest).map_err(|e| e.to_string())?;
+        let canonical = source.canonicalize().map_err(|e| format!("Can't open game folder: {e}"))?;
+        let destination = root()?.canonicalize().map_err(|e| e.to_string())?;
+        if destination.starts_with(&canonical) {
+            return Err("That folder contains SitePocket's own data. Select the specific game folder instead.".into());
         }
-    } else if source.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
-        let file = fs::File::open(source).map_err(|e| e.to_string())?;
-        let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-        if archive.len() > FILE_LIMIT { return Err("Archive contains too many entries".into()); }
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-            let relative = entry.enclosed_name().ok_or("Archive contains an unsafe file path")?.to_owned();
-            let dest = target.join(relative);
-            if entry.is_dir() { fs::create_dir_all(&dest).map_err(|e| e.to_string())?; continue; }
-            total = total.checked_add(entry.size()).ok_or("Game too large")?;
-            if total > LIMIT { return Err("Game exceeds the 2 GiB import limit".into()); }
-            if let Some(parent) = dest.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
-            let mut out = fs::File::create(dest).map_err(|e| e.to_string())?;
-            io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
-        }
-    } else { return Err("Select an HTML5 game folder or .zip file".into()); }
-    Ok(())
+    }
+    fs::create_dir_all(&target).map_err(|e| format!("Can't create game directory: {e}"))?;
+    let result = (|| {
+        let copied = import_files(source, &target)?;
+        let entry = find_game_entry(&target)?;
+        let mut apps = list_apps()?;
+        let taken: Vec<u16> = apps.iter().filter_map(|a| a.port).collect();
+        let port = (41000..61000).find(|p| !taken.contains(p))
+            .ok_or("No free local game port is available")?;
+        let entry_path = relative_url_path(&entry)?;
+        let app = InstalledApp {
+            id: id.clone(), name, kind: AppKind::Local, url: None, port: Some(port),
+            game_focus: false, entry_path: Some(entry_path),
+        };
+        if copied == 0 { return Err("The selected game folder or ZIP is empty.".into()); }
+        apps.push(app.clone());
+        save_apps(&apps)?;
+        Ok(app)
+    })();
+    if result.is_err() { let _ = fs::remove_dir_all(install_root); }
+    result
 }
+
+fn relative_url_path(path: &Path) -> Result<String, String> {
+    let parts = path.components().map(|component| match component {
+        std::path::Component::Normal(s) => s.to_str().map(str::to_owned),
+        _ => None,
+    }).collect::<Option<Vec<_>>>()
+        .ok_or("Game entry point contains an unsupported file name")?;
+    if parts.is_empty() { return Err("Could not locate the game entry point".into()); }
+    Ok(parts.join("/"))
+}
+
+/// Prefer index.html at the root, otherwise accept exactly one nested candidate.
+/// Avoid guessing when a package contains demos, samples and multiple games.
+fn find_game_entry(root: &Path) -> Result<PathBuf, String> {
+    let mut candidates = Vec::<PathBuf>::new();
+    for entry in walkdir::WalkDir::new(root).follow_links(false) {
+        let entry = entry.map_err(|e| format!("Could not inspect imported game: {e}"))?;
+        if !entry.file_type().is_file() { continue; }
+        if !entry.file_name().to_string_lossy().eq_ignore_ascii_case("index.html") { continue; }
+        let rel = entry.path().strip_prefix(root).map_err(|e| e.to_string())?.to_owned();
+        if rel.components().count() <= 6 {
+            candidates.push(rel);
+        }
+    }
+    if candidates.is_empty() {
+        return Err("No index.html found. Choose an exported HTML5 game folder or ZIP (not its source-code project).".into());
+    }
+    candidates.sort_by_key(|p| (p.components().count(), p.to_string_lossy().to_lowercase()));
+    if candidates[0].components().count() == 1 { return Ok(candidates.remove(0)); }
+    if candidates.len() > 1 {
+        let examples = candidates.iter().take(3)
+            .map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
+        return Err(format!("Multiple games found ({examples}). Choose the folder containing the index.html you want."));
+    }
+    Ok(candidates.remove(0))
+}
+
+fn import_files(source: &Path, target: &Path) -> Result<usize, String> {
+    let mut total = 0_u64;
+    let mut file_count = 0_usize;
+    if source.is_dir() {
+        let source = source.canonicalize().map_err(|e| format!("Cannot open game folder: {e}"))?;
+        for entry in walkdir::WalkDir::new(&source).follow_links(false) {
+            let entry = entry.map_err(|e| format!("Cannot inspect game files: {e}"))?;
+            if entry.file_type().is_symlink() {
+                return Err("The selected folder contains symbolic links, which are not supported.".into());
+            }
+            let rel = entry.path().strip_prefix(&source).map_err(|e| e.to_string())?;
+            let dest = target.join(rel);
+            if entry.file_type().is_dir() {
+                fs::create_dir_all(&dest).map_err(|e| format!("Can't create game subfolder: {e}"))?;
+                continue;
+            }
+            if !entry.file_type().is_file() { continue; }
+            file_count += 1;
+            if file_count > MAX_GAME_FILES { return Err("Import contains over 20,000 files. Choose a smaller game export.".into()); }
+            let size = entry.metadata().map_err(|e| e.to_string())?.len();
+            total = total.checked_add(size).ok_or("Game size overflow")?;
+            if total > MAX_GAME_BYTES { return Err("The game exceeds the 2 GiB import limit.".into()); }
+            if let Some(parent) = dest.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+            fs::copy(entry.path(), dest).map_err(|e| format!("Unable to copy {}: {e}", rel.display()))?;
+        }
+    } else if source.is_file() && source.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("zip")) {
+        let file = fs::File::open(source).map_err(|e| format!("Cannot open ZIP: {e}"))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| format!("Could not read ZIP archive ({e}). Check that it's a valid ZIP file."))?;
+        if archive.len() > MAX_GAME_FILES { return Err("ZIP contains over 20,000 files.".into()); }
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i)
+                .map_err(|e| format!("Cannot read ZIP entry #{i}: {e}"))?;
+            if entry.is_symlink() {
+                return Err("ZIP contains symbolic links; importing them is not supported.".into());
+            }
+            let relative = entry.enclosed_name()
+                .ok_or("ZIP contains a path outside the game folder; extraction was cancelled.")?
+                .to_owned();
+            let dest = target.join(&relative);
+            if entry.is_dir() {
+                fs::create_dir_all(&dest).map_err(|e| format!("Can't create ZIP subfolder: {e}"))?;
+                continue;
+            }
+            file_count += 1;
+            if file_count > MAX_GAME_FILES { return Err("ZIP contains over 20,000 files.".into()); }
+            total = total.checked_add(entry.size()).ok_or("Game size overflow")?;
+            if total > MAX_GAME_BYTES { return Err("The uncompressed ZIP exceeds the 2 GiB import limit.".into()); }
+            if let Some(parent) = dest.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+            let mut out = fs::File::create(&dest)
+                .map_err(|e| format!("Cannot write {}: {e}", relative.display()))?;
+            let written = io::copy(&mut entry, &mut out)
+                .map_err(|e| format!("Could not extract {}: {e}", relative.display()))?;
+            if written != entry.size() { return Err(format!("ZIP entry {} was incomplete.", relative.display())); }
+        }
+    } else {
+        return Err("Choose a game folder or a .zip archive, not a single file.".into());
+    }
+    Ok(file_count)
+}
+
 /// Persist launch preferences without overwriting other app entries.
 pub fn set_game_focus(id: &str, enabled: bool) -> Result<InstalledApp, String> {
     Uuid::parse_str(id).map_err(|_| "Invalid application ID".to_string())?;
@@ -150,16 +231,75 @@ mod tests {
     use super::*;
     #[test]
     fn modes_roundtrip() {
-        let app = InstalledApp { id: Uuid::new_v4().to_string(), name: "Test".into(), kind: AppKind::Local, url: None, port: Some(42000), game_focus: true };
+        let app = InstalledApp { id: Uuid::new_v4().to_string(), name: "Test".into(), kind: AppKind::Local, url: None, port: Some(42000), game_focus: true, entry_path: Some("Build/index.html".into()) };
         let value = serde_json::to_string(&app).unwrap();
         let back: InstalledApp = serde_json::from_str(&value).unwrap();
         assert!(matches!(back.kind, AppKind::Local));
         assert!(back.game_focus);
+        assert_eq!(back.entry_path.as_deref(), Some("Build/index.html"));
+    }
+
+    fn fixture() -> PathBuf {
+        let path = std::env::temp_dir().join(format!("webcask-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+    #[test]
+    fn folder_with_nested_index_works_and_preserves_assets() {
+        let root = fixture();
+        let original = root.join("export"); let dest = root.join("copy");
+        fs::create_dir_all(original.join("Build/assets")).unwrap();
+        fs::write(original.join("Build/index.html"), "<script src=\"assets/game.js\"></script>").unwrap();
+        fs::write(original.join("Build/assets/game.js"), "console.log(1)").unwrap();
+        assert_eq!(import_files(&original, &dest).unwrap(), 2);
+        assert_eq!(relative_url_path(&find_game_entry(&dest).unwrap()).unwrap(), "Build/index.html");
+        assert!(dest.join("Build/assets/game.js").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn zip_with_wrapper_dir_works() {
+        use std::io::Write;
+        let root = fixture();
+        let source = root.join("game.zip");
+        {
+            let writer = fs::File::create(&source).unwrap();
+            let mut zip = zip::ZipWriter::new(writer);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("Published/index.html", options).unwrap();
+            zip.write_all(b"<html><script src='engine.js'></script></html>").unwrap();
+            zip.start_file("Published/engine.js", options).unwrap();
+            zip.write_all(b"console.log('ok')").unwrap();
+            zip.finish().unwrap();
+        }
+        let dest = root.join("import");
+        assert_eq!(import_files(&source, &dest).unwrap(), 2);
+        assert_eq!(relative_url_path(&find_game_entry(&dest).unwrap()).unwrap(), "Published/index.html");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn missing_entry_returns_diagnostic() {
+        let root = fixture(); let src = root.join("src"); let dest = root.join("dest");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("main.js"), "hello").unwrap();
+        import_files(&src, &dest).unwrap();
+        assert!(find_game_entry(&dest).unwrap_err().contains("No index.html"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn multiple_nested_entries_are_not_guessed() {
+        let root = fixture();
+        fs::create_dir_all(root.join("one")).unwrap();
+        fs::create_dir_all(root.join("two")).unwrap();
+        fs::write(root.join("one/index.html"), "").unwrap();
+        fs::write(root.join("two/index.html"), "").unwrap();
+        assert!(find_game_entry(&root).unwrap_err().contains("Multiple games"));
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn legacy_records_default_to_website_view() {
         let old = r#"{"id":"abc","name":"Legacy","kind":"online","url":"https://example.com","port":null}"#;
         let parsed: InstalledApp = serde_json::from_str(old).unwrap();
         assert!(!parsed.game_focus);
+        assert!(parsed.entry_path.is_none());
     }
 }

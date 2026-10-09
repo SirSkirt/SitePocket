@@ -158,8 +158,20 @@ fn run() -> Result<(), String> {
     }).map_err(|e| e.to_string())
 }
 fn serve_local(app: &InstalledApp) -> Result<String, String> {
-    let root = webcask_core::app_path(&app.id)?.join("site")
-        .canonicalize().map_err(|e| e.to_string())?;
+    let site = webcask_core::app_path(&app.id)?.join("site")
+        .canonicalize().map_err(|e| format!("Can't find the imported game files: {e}"))?;
+    // An exported ZIP often contains a single wrapper directory.
+    // Serve *the entry point's directory* as the web root so both /assets/...
+    // and ./assets/... resolve just as they do in a standalone web export.
+    let entry = Path::new(app.entry_path.as_deref().unwrap_or("index.html"));
+    if entry.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err("Invalid saved game entry point".into());
+    }
+    let root = site.join(entry.parent().unwrap_or(Path::new("")))
+        .canonicalize().map_err(|e| format!("Could not find the game's HTML folder: {e}"))?;
+    if !root.starts_with(&site) || !root.join("index.html").is_file() {
+        return Err("index.html is missing from the imported game. Try importing it again.".into());
+    }
     let port = app.port.ok_or("Missing game port")?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .map_err(|e| format!("Port {port} unavailable: {e}"))?;

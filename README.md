@@ -10,8 +10,15 @@ manager.
 ## Implemented in this version
 
 - Install a website URL even when it doesn't have a PWA manifest.
-- Import a local HTML5/JavaScript/WebAssembly game directory or ZIP that has
-  an index.html at its root.
+- Import a local HTML5/JavaScript/WebAssembly game folder or ZIP, including
+  exports with **one wrapper directory** (e.g. `MyGame/dist/index.html`).
+  SitePocket finds a unique `index.html` up to six folders deep, preserves the
+  source tree, and serves the containing directory as the web root so absolute
+  asset paths such as `/assets/main.js` work.
+- Import status and errors appear inline **to the left of Import Game**. If
+  import fails, SitePocket keeps the selected source and name so you can fix
+  the problem. Diagnostics distinguish invalid ZIPs, missing `index.html`,
+  ambiguous multiple game entries, oversized archives, and copy errors.
 - Launch individual apps via a standalone WebCask process and webview.
 - Persist separate user-data/browser profiles for installed apps.
 - Serve local games via a read-only 127.0.0.1 HTTP server with WASM MIME,
@@ -37,7 +44,11 @@ profile for the downloaded game, so existing online saves may not carry over.
 No bypass of DRM, paid access, login protection or usage permissions is attempted.
 The report in each downloaded game's directory records missing resources and
 marks offline status "unverified"; **test by disconnecting your network**.
-Imports require a game with local assets. Network-only
+Imports require a game with local assets. When a ZIP contains multiple
+`index.html` files and no root index, select a more specific folder rather
+than letting the importer guess. Files outside the selected game entry's
+directory are not served for security and compatibility.
+Network-only
 features will stay network-dependent. The localhost server uses a stable per-app
 port (a port conflict prevents launch), does not stream large files or support
 HTTP Range requests in this alpha. Shortcuts use a shared runtime icon and

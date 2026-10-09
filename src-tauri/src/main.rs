@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{path::{Path, PathBuf}, process::Command};
+use std::{net::{Ipv4Addr, TcpListener}, path::{Path, PathBuf}, process::Command};
 use tauri::Manager;
 use webcask_core::{InstalledApp, get_app};
 
@@ -37,7 +37,18 @@ fn runtime_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn launch_app(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    get_app(&id)?;
+    let installed = get_app(&id)?;
+    if matches!(installed.kind, webcask_core::AppKind::Local) {
+        let site = webcask_core::app_path(&id)?.join("site");
+        let entry = site.join(installed.entry_path.as_deref().unwrap_or("index.html"));
+        if !entry.is_file() {
+            return Err("The imported game's index.html file is missing. Remove it and import the game again.".into());
+        }
+        let port = installed.port.ok_or("Imported game is missing its local server port")?;
+        TcpListener::bind((Ipv4Addr::LOCALHOST, port)).map_err(|_| {
+            format!("The game's local port {port} is already in use. Close its other window and retry.")
+        })?;
+    }
     Command::new(runtime_binary(&app)?)
         .args(["--app-id", &id])
         .spawn().map_err(|e| format!("Unable to start WebCask: {e}"))?;

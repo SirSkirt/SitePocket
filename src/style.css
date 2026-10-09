@@ -42,3 +42,25 @@ footer{padding-top:38px;color:#577184;font-size:10px;text-align:center}
 /* Extra game capture controls may wrap at narrower window widths. */
 .app-actions { flex-wrap: wrap; justify-content: flex-end; }
 .library-head { gap: 12px; flex-wrap: wrap; }
+
+/* Inline importer feedback — stays visible on failed imports and next to action button. */
+.form-foot { align-items: center; }
+.form-feedback {
+  flex: 1 1 250px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #9db4c3;
+  overflow-wrap: anywhere;
+}
+.form-feedback.info { color: #b3d9ee; }
+.form-feedback.success { color: #85e3bb; }
+.form-feedback.error { color: #ffabb1; }
+.form-feedback.info::before { content: 'ⓘ '; }
+.form-feedback.success::before { content: '✓ '; }
+.form-feedback.error::before { content: '⚠ '; }
+.form-foot #install-button { flex: 0 0 auto; }
+@media(max-width:850px) {
+  .form-foot { align-items: stretch; flex-direction: column; }
+  .form-foot #install-button { align-self: flex-end; }
+}

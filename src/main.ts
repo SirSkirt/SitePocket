@@ -2,12 +2,34 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import './style.css';
 
-type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null; gameFocus?: boolean };
+type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null; gameFocus?: boolean; entryPath?: string | null };
 type Mode = 'website' | 'game';
 let apps: InstalledApp[] = [];
 let mode: Mode = 'website';
 let selectedPath = '';
 let busy = false;
+let draftName = '';
+let draftUrl = '';
+let feedback: { kind: 'info' | 'error' | 'success'; message: string } | null = null;
+
+function formMessage(kind: 'info' | 'error' | 'success', message: string) {
+  feedback = { kind, message };
+  const target = document.querySelector<HTMLDivElement>('#form-feedback');
+  if (target) {
+    target.className = 'form-feedback ' + kind;
+    target.textContent = message;
+  }
+}
+function clearFormMessage() {
+  feedback = null;
+  const target = document.querySelector<HTMLDivElement>('#form-feedback');
+  if (target) {
+    target.textContent = mode === 'game'
+      ? 'Import a folder or ZIP with an index.html file.'
+      : 'No PWA manifest required.';
+    target.className = 'form-feedback';
+  }
+}
 
 const mount = document.querySelector<HTMLDivElement>('#app')!;
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c] || c);
@@ -36,22 +58,34 @@ function render() {
     '<h2>' + (mode === 'website' ? 'Install a website' : 'Import an offline game') + '</h2><p>' +
     (mode === 'website' ? 'Give any website its own dedicated WebCask window.' : 'Bring your HTML, JavaScript or WebAssembly game as a folder or ZIP.') +
     '</p></div></div><form id="install-form"><div class="form-grid"><label>APP NAME<input id="name" placeholder="' +
-    (mode === 'website' ? 'e.g. YouTube Music' : 'e.g. My Game') + '" maxlength="80" required /></label>' +
+    (mode === 'website' ? 'e.g. YouTube Music' : 'e.g. My Game') + '" value="' + escapeHtml(draftName) + '" maxlength="80" required /></label>' +
     (mode === 'website' ?
-    '<label>WEBSITE ADDRESS<input id="address" type="url" placeholder="https://example.com" required /></label>' :
+    '<label>WEBSITE ADDRESS<input id="address" type="url" placeholder="https://example.com" value="' + escapeHtml(draftUrl) + '" required /></label>' :
     '<label>GAME SOURCE<div class="picker"><span id="path-label">' + (selectedPath ? escapeHtml(selectedPath) : 'No folder or ZIP selected') +
     '</span><button type="button" class="secondary" id="pick-folder">Folder</button><button type="button" class="secondary" id="pick-zip">ZIP</button></div></label>') +
-    '</div><div class="form-foot"><span>' + (mode === 'website' ? 'Uses the website online. No PWA manifest required.' : 'Runs locally. index.html must be in the selected root.') +
-    '</span><button class="primary" type="submit" ' + (busy ? 'disabled' : '') + '>' +
+    '</div><div class="form-foot"><div id="form-feedback" role="status" aria-live="polite" class="form-feedback ' +
+    (feedback ? feedback.kind : '') + '">' + escapeHtml(feedback?.message ||
+    (mode === 'game' ? 'Import a folder or ZIP with an index.html file.' : 'No PWA manifest required.')) +
+    '</div><button id="install-button" class="primary" type="submit" ' + (busy ? 'disabled' : '') + '>' +
     (busy ? 'Installing…' : mode === 'website' ? '＋ Install website' : '＋ Import game') + '</button></div></form></section>' +
     '<section class="library-head"><div><div class="eyebrow">READY TO LAUNCH</div><h2>Installed applications <span>' + itemCount + '</span></h2></div><button class="secondary" id="refresh-list">↻ Refresh library</button></section>' +
     '<div class="library">' + (itemCount ? apps.map(renderApp).join('') :
     '<div class="empty"><div class="empty-icon">▦</div><h3>Nothing in your pocket yet</h3><p>Install your first site or import a game to get started.</p></div>') +
     '</div><footer>SitePocket manages your apps · WebCask runs them independently · Windows Alpha</footer></main></div><div id="toast" class="toast"></div>';
   document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
-    mode = button.dataset.mode as Mode; selectedPath = ''; render();
+    mode = button.dataset.mode as Mode;
+    selectedPath = ''; draftName = ''; draftUrl = ''; feedback = null;
+    render();
   });
   document.getElementById('install-form')!.addEventListener('submit', submitInstall);
+  document.querySelector<HTMLInputElement>('#name')?.addEventListener('input', e => {
+    draftName = (e.target as HTMLInputElement).value;
+    if (feedback?.kind === 'error') clearFormMessage();
+  });
+  document.querySelector<HTMLInputElement>('#address')?.addEventListener('input', e => {
+    draftUrl = (e.target as HTMLInputElement).value;
+    if (feedback?.kind === 'error') clearFormMessage();
+  });
   document.getElementById('refresh-list')?.addEventListener('click', refresh);
   document.getElementById('pick-folder')?.addEventListener('click', () => pick(true));
   document.getElementById('pick-zip')?.addEventListener('click', () => pick(false));
@@ -70,28 +104,65 @@ function renderApp(a: InstalledApp): string {
     '<button class="danger" data-action="remove" data-id="' + a.id + '" title="Uninstall">×</button></div></article>';
 }
 async function pick(folder: boolean) {
+  if (busy) return;
   try {
     const result = folder ? await open({ directory: true, multiple: false }) :
       await open({ directory: false, multiple: false, filters: [{ name:'ZIP archives', extensions:['zip'] }] });
-    if (typeof result === 'string') { selectedPath = result; document.getElementById('path-label')!.textContent = result; }
-  } catch (e) { notice(errorText(e), true); }
+    if (typeof result === 'string' && result.trim()) {
+      selectedPath = result;
+      const label = document.getElementById('path-label');
+      if (label) label.textContent = result;
+      formMessage('info', (folder ? 'Folder' : 'ZIP') + ' selected. Ready to import.');
+    } else if (!selectedPath) {
+      formMessage('info', 'No game selected. Choose Folder or ZIP.');
+    }
+  } catch (e) {
+    formMessage('error', 'Could not select a game: ' + errorText(e));
+  }
 }
 async function submitInstall(ev: Event) {
   ev.preventDefault();
   if (busy) return;
+  const currentMode = mode;
   const name = (document.getElementById('name') as HTMLInputElement).value.trim();
   const address = (document.getElementById('address') as HTMLInputElement | null)?.value.trim();
-  if (mode === 'game' && !selectedPath) { notice('Choose a folder or ZIP first.', true); return; }
+  draftName = name; draftUrl = address || '';
+  if (currentMode === 'game' && !selectedPath) {
+    formMessage('error', 'Choose a folder or ZIP containing the exported game files first.');
+    return;
+  }
+  if (!name) {
+    formMessage('error', 'Give the game a name before importing.');
+    return;
+  }
   busy = true;
-  const currentMode = mode;
+  const button = document.querySelector<HTMLButtonElement>('#install-button');
+  if (button) {
+    button.disabled = true;
+    button.textContent = currentMode === 'game' ? 'Importing…' : 'Installing…';
+  }
+  formMessage('info', currentMode === 'game'
+    ? 'Checking the game files and importing… This can take a moment for large ZIPs.'
+    : 'Installing the web application…');
   try {
-    await invoke(currentMode === 'website' ? 'install_website' : 'import_game',
+    const result = await invoke<InstalledApp>(currentMode === 'website' ? 'install_website' : 'import_game',
       currentMode === 'website' ? { name, url: address } : { name, path: selectedPath });
-    selectedPath = '';
+    selectedPath = ''; draftName = ''; draftUrl = '';
     await refresh();
-    notice(currentMode === 'website' ? 'Website installed.' : 'Offline game imported.');
-  } catch (e) { notice(errorText(e), true); }
-  finally { busy = false; render(); }
+    formMessage('success', currentMode === 'game'
+      ? 'Imported ' + result.name + '. Entry: ' + (result.entryPath || 'index.html') + '. Press Launch below to play.'
+      : result.name + ' installed successfully. Ready to launch.');
+  } catch (e) {
+    // Keep the selected path and form contents so the user can correct the error.
+    formMessage('error', errorText(e));
+  } finally {
+    busy = false;
+    const current = document.querySelector<HTMLButtonElement>('#install-button');
+    if (current) {
+      current.disabled = false;
+      current.textContent = currentMode === 'game' ? '＋ Import game' : '＋ Install website';
+    }
+  }
 }
 async function action(command: string, id: string) {
   const app = apps.find(a => a.id === id);
@@ -111,7 +182,13 @@ async function action(command: string, id: string) {
     else if (command === 'launch') { await invoke('launch_app', { id }); notice('Launching ' + app.name + '…'); }
     else if (command === 'shortcut') { const location = await invoke<string>('create_shortcut', { id }); notice('Shortcut created: ' + location); }
     else if (command === 'remove') { await invoke('remove_app', { id }); await refresh(); notice('Application removed.'); }
-  } catch (e) { notice(errorText(e), true); }
+  } catch (e) {
+    if (command === 'launch' && app.kind === 'local' && mode === 'game') {
+      formMessage('error', 'Could not launch ' + app.name + ': ' + errorText(e));
+    } else {
+      notice(errorText(e), true);
+    }
+  }
 }
 render();
 refresh();
