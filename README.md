@@ -24,6 +24,15 @@ manager.
 - Serve local games via a read-only 127.0.0.1 HTTP server with WASM MIME,
   path traversal restrictions and cross-origin isolation headers.
 - Create Desktop shortcuts; uninstall apps and remove their local profiles.
+- **Game Options** on every installed app: save a per-app **Launch in Game View**
+  preference, and choose **Windowed**, **Maximized**, or **Fullscreen** at startup.
+  Windowed mode has customizable initial width/height (480–3840 by 320–2160).
+  WebCask reads these settings at launch even when starting from a desktop
+  shortcut. Existing installs default to their previous 1150 × 760 window and
+  preserve their previously configured Game View state.
+  Borderless fullscreen covers a display without changing its resolution; use
+  Alt+F4 to close when the webview has no title bar. Settings take effect the
+  next time the app launches.
 - **Game Focus Mode:** per-app preference expands the largest visible HTML5 canvas
   or embedded iframe into the window and hides surrounding site elements.
   Ctrl+Shift+G toggles page/game view; Ctrl+Shift+P lets you pick a game element

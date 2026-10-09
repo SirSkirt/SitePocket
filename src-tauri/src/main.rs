@@ -21,6 +21,18 @@ fn set_game_focus(id: String, enabled: bool) -> Result<InstalledApp, String> {
     webcask_core::set_game_focus(&id, enabled)
 }
 #[tauri::command]
+fn set_game_options(
+    id: String,
+    game_focus: bool,
+    window_mode: webcask_core::WindowMode,
+    window_width: u32,
+    window_height: u32,
+) -> Result<InstalledApp, String> {
+    webcask_core::set_game_options(
+        &id, game_focus, window_mode, window_width, window_height
+    )
+}
+#[tauri::command]
 fn remove_app(id: String) -> Result<(), String> {
     webcask_core::remove_app(&id)
 }
@@ -95,7 +107,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            list_apps, install_website, import_game, set_game_focus, remove_app, launch_app, capture_app, create_shortcut
+            list_apps, install_website, import_game, set_game_focus, set_game_options,
+            remove_app, launch_app, capture_app, create_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("failed to start SitePocket");

@@ -3,9 +3,9 @@ mod capture;
 use std::{collections::HashSet, fs, io::{Read, Write}, net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Component, Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
     thread, time::Duration};
-use webcask_core::{AppKind, InstalledApp};
+use webcask_core::{AppKind, InstalledApp, WindowMode};
 use winit::{application::ApplicationHandler, dpi::LogicalSize, event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy}, window::{Window, WindowId}};
+    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy}, window::{Fullscreen, Window, WindowId}};
 use wry::{WebContext, WebView, WebViewBuilder};
 
 enum CaptureEvent { Finished(Result<String, String>) }
@@ -25,6 +25,9 @@ struct WebCask {
     context: Option<WebContext>,
     profile: PathBuf,
     game_focus: bool,
+    window_mode: WindowMode,
+    window_width: u32,
+    window_height: u32,
     capture: Option<CaptureSession>,
 }
 
@@ -46,9 +49,18 @@ impl ApplicationHandler<CaptureEvent> for WebCask {
 
     fn resumed(&mut self, events: &ActiveEventLoop) {
         if self.window.is_some() { return; }
-        let attrs = Window::default_attributes().with_title(&self.title)
-            .with_inner_size(LogicalSize::new(1150., 760.))
+        let mut attrs = Window::default_attributes().with_title(&self.title)
+            .with_inner_size(LogicalSize::new(
+                self.window_width as f64, self.window_height as f64
+            ))
             .with_min_inner_size(LogicalSize::new(480., 320.));
+        attrs = match self.window_mode {
+            WindowMode::Windowed => attrs,
+            WindowMode::Maximized => attrs.with_maximized(true),
+            WindowMode::Fullscreen => attrs.with_fullscreen(
+                Some(Fullscreen::Borderless(None))
+            ),
+        };
         let window = match events.create_window(attrs) {
             Ok(w) => w, Err(e) => { eprintln!("Window: {e}"); events.exit(); return; }
         };
@@ -136,6 +148,11 @@ fn run() -> Result<(), String> {
     fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let game_focus = app.game_focus;
     let capture_mode = args.iter().any(|arg| arg == "--capture");
+    // Capture should remain accessible in a window, even if the normal
+    // game is configured to open in fullscreen.
+    let window_mode = if capture_mode { WindowMode::Windowed } else { app.window_mode };
+    let window_width = app.window_width;
+    let window_height = app.window_height;
     if capture_mode && !matches!(&app.kind, AppKind::Online) {
         return Err("Only online apps can be captured".into());
     }
@@ -154,7 +171,8 @@ fn run() -> Result<(), String> {
     } else { None };
     events.run_app(&mut WebCask {
         title: if capture_mode { format!("WebCask Capture · {}", app.name) } else { app.name },
-        url, window: None, webview: None, context: None, profile, game_focus, capture
+        url, window: None, webview: None, context: None, profile, game_focus,
+        window_mode, window_width, window_height, capture
     }).map_err(|e| e.to_string())
 }
 fn serve_local(app: &InstalledApp) -> Result<String, String> {

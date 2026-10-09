@@ -64,3 +64,68 @@ footer{padding-top:38px;color:#577184;font-size:10px;text-align:center}
   .form-foot { align-items: stretch; flex-direction: column; }
   .form-foot #install-button { align-self: flex-end; }
 }
+
+
+/* Game Options modal for all installed WebCask apps and games. */
+.options-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px; background: rgba(3, 9, 17, .78);
+  backdrop-filter: blur(5px);
+}
+.options-dialog {
+  background: #192b3a; border: 1px solid #426075;
+  border-radius: 16px; padding: 27px;
+  box-shadow: 0 25px 90px #0009; width: min(520px, 100%);
+  max-height: 94vh; overflow-y: auto;
+}
+.options-heading {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; margin: 0 0 24px;
+}
+.options-heading h2 { margin-top: 8px; }
+.options-heading p { overflow-wrap: anywhere; }
+.options-x {
+  flex: 0 0 auto; font-size: 24px; line-height: 28px; color: #c5d9e0;
+  background: transparent; padding: 0 7px; border-radius: 8px;
+}
+.options-check {
+  display: flex; gap: 12px; padding: 14px 13px;
+  align-items: flex-start; background: #112432;
+  border: 1px solid #315063; border-radius: 11px;
+  margin-bottom: 23px; cursor: pointer; letter-spacing: normal;
+}
+.options-check input {
+  appearance: auto; accent-color: #6ed8b2; flex: 0 0 17px;
+  width: 17px; height: 17px; margin: 3px 0 0; padding: 0;
+}
+.options-check span { display: flex; flex-direction: column; gap: 5px; }
+.options-check strong { color: #f2fafb; font-size: 14px; }
+.options-check small { color: #91afbe; font-size: 12px; font-weight: 400; line-height: 1.5; }
+.options-label {
+  display: block; font-size: 10px; letter-spacing: 1px;
+  color: #abc3cf; font-weight: 800; margin-bottom: 10px;
+}
+.options-select {
+  display: block; width: 100%; border: 1px solid #3a5365; outline: none;
+  padding: 12px 14px; border-radius: 9px; color: #f5f7fb;
+  background: #101e2b; font: inherit; font-size: 13px;
+  margin-bottom: 20px;
+}
+.options-size { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.options-size label { font-size: 10px; }
+.options-size input:disabled { opacity: .45; }
+.options-help {
+  margin-top: 16px; line-height: 1.55;
+}
+#options-error {
+  color: #ffadb6; min-height: 17px; margin: 12px 0;
+  font-size: 12px; overflow-wrap: anywhere;
+}
+.options-footer { display: flex; justify-content: flex-end; gap: 10px; }
+.options-footer button { padding: 12px 17px; }
+@media(max-width:530px) {
+  .options-dialog { padding: 18px; }
+  .options-size { grid-template-columns: 1fr; }
+  .options-footer { flex-wrap: wrap; }
+}

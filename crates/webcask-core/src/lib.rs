@@ -7,6 +7,18 @@ use uuid::Uuid;
 #[serde(rename_all = "lowercase")]
 pub enum AppKind { Online, Local }
 
+/// Launch-time window presentation; automatically defaults for older app registries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowMode {
+    #[default]
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+fn default_window_width() -> u32 { 1150 }
+fn default_window_height() -> u32 { 760 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledApp {
@@ -20,6 +32,12 @@ pub struct InstalledApp {
     /// Relative HTML entry point, e.g. "dist/index.html". Old apps default to root.
     #[serde(default)]
     pub entry_path: Option<String>,
+    #[serde(default)]
+    pub window_mode: WindowMode,
+    #[serde(default = "default_window_width")]
+    pub window_width: u32,
+    #[serde(default = "default_window_height")]
+    pub window_height: u32,
 }
 pub fn root() -> Result<PathBuf, String> {
     let path = dirs::data_local_dir().ok_or("Local application data directory unavailable")?.join("SitePocket");
@@ -58,7 +76,8 @@ pub fn install_website(name: &str, address: &str) -> Result<InstalledApp, String
         return Err("Only HTTP(S) websites without embedded credentials are supported".into());
     }
     let app = InstalledApp { id: Uuid::new_v4().to_string(), name, kind: AppKind::Online,
-        url: Some(parsed.to_string()), port: None, game_focus: false, entry_path: None };
+        url: Some(parsed.to_string()), port: None, game_focus: false, entry_path: None, window_mode: WindowMode::default(),
+        window_width: default_window_width(), window_height: default_window_height() };
     let mut apps = list_apps()?;
     apps.push(app.clone());
     save_apps(&apps)?;
@@ -96,6 +115,8 @@ pub fn import_game(name: &str, source: &Path) -> Result<InstalledApp, String> {
         let app = InstalledApp {
             id: id.clone(), name, kind: AppKind::Local, url: None, port: Some(port),
             game_focus: false, entry_path: Some(entry_path),
+            window_mode: WindowMode::default(),
+            window_width: default_window_width(), window_height: default_window_height(),
         };
         if copied == 0 { return Err("The selected game folder or ZIP is empty.".into()); }
         apps.push(app.clone());
@@ -203,6 +224,34 @@ fn import_files(source: &Path, target: &Path) -> Result<usize, String> {
     Ok(file_count)
 }
 
+/// Validate launch settings here, not just in the UI. The game window is resizable
+/// after launch; these dimensions describe its initial windowed size.
+pub fn validate_game_options(width: u32, height: u32) -> Result<(), String> {
+    if !(480..=3840).contains(&width) || !(320..=2160).contains(&height) {
+        return Err("Window size must be 480–3840 px wide and 320–2160 px high.".into());
+    }
+    Ok(())
+}
+
+/// Save options for an existing app without changing its files, ID, or profile.
+/// The next independent WebCask launch picks up these values automatically.
+pub fn set_game_options(
+    id: &str, game_focus: bool, window_mode: WindowMode, window_width: u32,
+    window_height: u32,
+) -> Result<InstalledApp, String> {
+    Uuid::parse_str(id).map_err(|_| "Invalid application ID".to_string())?;
+    validate_game_options(window_width, window_height)?;
+    let mut apps = list_apps()?;
+    let entry = apps.iter_mut().find(|a| a.id == id).ok_or("Application not found")?;
+    entry.game_focus = game_focus;
+    entry.window_mode = window_mode;
+    entry.window_width = window_width;
+    entry.window_height = window_height;
+    let updated = entry.clone();
+    save_apps(&apps)?;
+    Ok(updated)
+}
+
 /// Persist launch preferences without overwriting other app entries.
 pub fn set_game_focus(id: &str, enabled: bool) -> Result<InstalledApp, String> {
     Uuid::parse_str(id).map_err(|_| "Invalid application ID".to_string())?;
@@ -230,13 +279,24 @@ pub fn get_app(id: &str) -> Result<InstalledApp, String> {
 mod tests {
     use super::*;
     #[test]
+    fn rejects_invalid_window_dimensions() {
+        assert!(validate_game_options(480, 320).is_ok());
+        assert!(validate_game_options(3840, 2160).is_ok());
+        assert!(validate_game_options(479, 760).is_err());
+        assert!(validate_game_options(1280, 2161).is_err());
+    }
+    #[test]
     fn modes_roundtrip() {
-        let app = InstalledApp { id: Uuid::new_v4().to_string(), name: "Test".into(), kind: AppKind::Local, url: None, port: Some(42000), game_focus: true, entry_path: Some("Build/index.html".into()) };
+        let app = InstalledApp { id: Uuid::new_v4().to_string(), name: "Test".into(), kind: AppKind::Local, url: None, port: Some(42000), game_focus: true, entry_path: Some("Build/index.html".into()),
+            window_mode: WindowMode::Fullscreen, window_width: 1280, window_height: 720 };
         let value = serde_json::to_string(&app).unwrap();
         let back: InstalledApp = serde_json::from_str(&value).unwrap();
         assert!(matches!(back.kind, AppKind::Local));
         assert!(back.game_focus);
         assert_eq!(back.entry_path.as_deref(), Some("Build/index.html"));
+        assert_eq!(back.window_mode, WindowMode::Fullscreen);
+        assert_eq!(back.window_width, 1280);
+        assert_eq!(back.window_height, 720);
     }
 
     fn fixture() -> PathBuf {
@@ -301,5 +361,8 @@ mod tests {
         let parsed: InstalledApp = serde_json::from_str(old).unwrap();
         assert!(!parsed.game_focus);
         assert!(parsed.entry_path.is_none());
+        assert_eq!(parsed.window_mode, WindowMode::Windowed);
+        assert_eq!(parsed.window_width, 1150);
+        assert_eq!(parsed.window_height, 760);
     }
 }

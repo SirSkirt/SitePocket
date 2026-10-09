@@ -2,7 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import './style.css';
 
-type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null; gameFocus?: boolean; entryPath?: string | null };
+type WindowMode = 'windowed' | 'maximized' | 'fullscreen';
+type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null; gameFocus?: boolean; entryPath?: string | null; windowMode?: WindowMode; windowWidth?: number; windowHeight?: number };
 type Mode = 'website' | 'game';
 let apps: InstalledApp[] = [];
 let mode: Mode = 'website';
@@ -10,6 +11,9 @@ let selectedPath = '';
 let busy = false;
 let draftName = '';
 let draftUrl = '';
+let editingId: string | null = null;
+let optionsSaving = false;
+let optionsError = '';
 let feedback: { kind: 'info' | 'error' | 'success'; message: string } | null = null;
 
 function formMessage(kind: 'info' | 'error' | 'success', message: string) {
@@ -71,7 +75,8 @@ function render() {
     '<section class="library-head"><div><div class="eyebrow">READY TO LAUNCH</div><h2>Installed applications <span>' + itemCount + '</span></h2></div><button class="secondary" id="refresh-list">↻ Refresh library</button></section>' +
     '<div class="library">' + (itemCount ? apps.map(renderApp).join('') :
     '<div class="empty"><div class="empty-icon">▦</div><h3>Nothing in your pocket yet</h3><p>Install your first site or import a game to get started.</p></div>') +
-    '</div><footer>SitePocket manages your apps · WebCask runs them independently · Windows Alpha</footer></main></div><div id="toast" class="toast"></div>';
+    '</div><footer>SitePocket manages your apps · WebCask runs them independently · Windows Alpha</footer></main></div>' +
+    renderOptions() + '<div id="toast" class="toast"></div>';
   document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
     mode = button.dataset.mode as Mode;
     selectedPath = ''; draftName = ''; draftUrl = ''; feedback = null;
@@ -90,19 +95,120 @@ function render() {
   document.getElementById('pick-folder')?.addEventListener('click', () => pick(true));
   document.getElementById('pick-zip')?.addEventListener('click', () => pick(false));
   document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(button => button.onclick = () => action(button.dataset.action!, button.dataset.id!));
+  document.querySelector<HTMLFormElement>('#game-options-form')?.addEventListener('submit', saveOptions);
+  document.querySelector<HTMLButtonElement>('#game-options-close')?.addEventListener('click', closeOptions);
+  document.querySelector<HTMLButtonElement>('#game-options-cancel')?.addEventListener('click', closeOptions);
+  document.querySelector<HTMLDivElement>('.options-backdrop')?.addEventListener('click', event => {
+    if (event.target === event.currentTarget) closeOptions();
+  });
+  document.querySelector<HTMLSelectElement>('#opt-mode')?.addEventListener('change', event => {
+    const windowed = (event.target as HTMLSelectElement).value === 'windowed';
+    document.querySelectorAll<HTMLInputElement>('.options-size-field').forEach(field => {
+      field.disabled = !windowed;
+    });
+  });
 }
 function renderApp(a: InstalledApp): string {
   const local = a.kind === 'local';
   return '<article class="app-card"><div class="app-icon ' + (local ? 'game-icon' : '') + '">' + (local ? '▣' : '◎') +
     '</div><div class="app-meta"><h3>' + escapeHtml(a.name) + '</h3><p>' + (local ? 'OFFLINE GAME' : 'WEB APPLICATION') +
     '</p><div class="app-url">' + escapeHtml(local ? 'Local HTML5 / WASM package' : (a.url ?? '')) + '</div></div>' +
-    '<div class="app-actions"><button class="secondary focus-toggle" data-action="focus" data-id="' + a.id + '" title="Hide site chrome and expand a detected game canvas or frame; takes effect on next launch">' +
-    (a.gameFocus ? '▣ Game view: ON' : '▤ Game view: OFF') + '</button>' +
+    '<div class="app-actions"><button class="secondary" data-action="options" data-id="' + a.id + '" title="Adjust Game View, launch window mode, and size">⚙ Game Options</button>' +
     (local ? '' : '<button class="secondary" data-action="capture" data-id="' + a.id + '" title="Open the game online, explore levels, then capture observed same-origin assets">↓ Capture offline</button>') +
     '<button class="primary" data-action="launch" data-id="' + a.id + '">▶ Launch</button>' +
     '<button class="secondary" data-action="shortcut" data-id="' + a.id + '" title="Create desktop shortcut">↗ Shortcut</button>' +
     '<button class="danger" data-action="remove" data-id="' + a.id + '" title="Uninstall">×</button></div></article>';
 }
+function renderOptions(): string {
+  if (!editingId) return '';
+  const app = apps.find(item => item.id === editingId);
+  if (!app) return '';
+  const mode = app.windowMode || 'windowed';
+  const modeChoices: [WindowMode, string][] = [
+    ['windowed', 'Windowed — resizable'],
+    ['maximized', 'Maximized — fill desktop work area'],
+    ['fullscreen', 'Fullscreen — borderless display'],
+  ];
+  const options = modeChoices.map(([value, label]) =>
+    '<option value="' + value + '"' + (mode === value ? ' selected' : '') + '>' + escapeHtml(label) + '</option>'
+  ).join('');
+  return '<div class="options-backdrop"><section class="options-dialog" role="dialog" aria-modal="true" ' +
+    'aria-labelledby="options-title">' +
+    '<header class="options-heading"><div><div class="eyebrow">WEBCASK RUNTIME</div>' +
+    '<h2 id="options-title">Game Options</h2><p>' + escapeHtml(app.name) +
+    '</p></div><button id="game-options-close" type="button" class="options-x" aria-label="Close options">×</button></header>' +
+    '<form id="game-options-form">' +
+    '<label class="options-check"><input id="opt-game-view" type="checkbox"' +
+    (app.gameFocus ? ' checked' : '') + '><span><strong>Launch in Game View</strong>' +
+    '<small>Focus the detected game canvas or iframe, hiding surrounding website elements.</small></span></label>' +
+    '<label class="options-label" for="opt-mode">LAUNCH WINDOW MODE</label>' +
+    '<select id="opt-mode" class="options-select">' + options + '</select>' +
+    '<div class="options-size"><label for="opt-width">WINDOW WIDTH (PX)' +
+    '<input class="options-size-field" id="opt-width" type="number" min="480" max="3840" step="1" required value="' +
+    (app.windowWidth ?? 1150) + '"' + (mode === 'windowed' ? '' : ' disabled') + '></label>' +
+    '<label for="opt-height">WINDOW HEIGHT (PX)' +
+    '<input class="options-size-field" id="opt-height" type="number" min="320" max="2160" step="1" required value="' +
+    (app.windowHeight ?? 760) + '"' + (mode === 'windowed' ? '' : ' disabled') + '></label></div>' +
+    '<p class="options-help">Window size applies when launching windowed. Fullscreen and maximized use the display size. ' +
+    'Changes apply on the next launch, including desktop shortcuts.</p>' +
+    '<p id="options-error" role="alert" aria-live="polite">' + escapeHtml(optionsError) + '</p>' +
+    '<div class="options-footer"><button type="button" id="game-options-cancel" class="secondary">Cancel</button>' +
+    '<button type="submit" class="primary" id="game-options-save"' + (optionsSaving ? ' disabled' : '') + '>' +
+    (optionsSaving ? 'Saving…' : 'Save Game Options') + '</button></div>' +
+    '</form></section></div>';
+}
+function openOptions(id: string) {
+  editingId = id;
+  optionsError = '';
+  optionsSaving = false;
+  render();
+  document.querySelector<HTMLInputElement>('#opt-game-view')?.focus();
+}
+function closeOptions() {
+  if (optionsSaving) return;
+  editingId = null;
+  optionsError = '';
+  render();
+}
+async function saveOptions(event: Event) {
+  event.preventDefault();
+  if (!editingId || optionsSaving) return;
+  const id = editingId;
+  const gameFocus = document.querySelector<HTMLInputElement>('#opt-game-view')!.checked;
+  const windowMode = document.querySelector<HTMLSelectElement>('#opt-mode')!.value as WindowMode;
+  const windowWidth = Number(document.querySelector<HTMLInputElement>('#opt-width')!.value);
+  const windowHeight = Number(document.querySelector<HTMLInputElement>('#opt-height')!.value);
+  if (!Number.isInteger(windowWidth) || !Number.isInteger(windowHeight) ||
+      windowWidth < 480 || windowWidth > 3840 || windowHeight < 320 || windowHeight > 2160) {
+    optionsError = 'Use a window size between 480 × 320 and 3840 × 2160.';
+    document.querySelector<HTMLElement>('#options-error')!.textContent = optionsError;
+    return;
+  }
+  if (!['windowed', 'maximized', 'fullscreen'].includes(windowMode)) {
+    optionsError = 'Choose a valid window mode.';
+    document.querySelector<HTMLElement>('#options-error')!.textContent = optionsError;
+    return;
+  }
+  optionsSaving = true;
+  const button = document.querySelector<HTMLButtonElement>('#game-options-save');
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  try {
+    await invoke('set_game_options', { id, gameFocus, windowMode, windowWidth, windowHeight });
+    editingId = null;
+    optionsError = '';
+    await refresh();
+    notice('Game Options saved. Relaunch to apply.');
+  } catch (error) {
+    optionsError = errorText(error);
+    const label = document.querySelector<HTMLElement>('#options-error');
+    if (label) label.textContent = optionsError;
+  } finally {
+    optionsSaving = false;
+    const current = document.querySelector<HTMLButtonElement>('#game-options-save');
+    if (current) { current.disabled = false; current.textContent = 'Save Game Options'; }
+  }
+}
+
 async function pick(folder: boolean) {
   if (busy) return;
   try {
@@ -167,15 +273,10 @@ async function submitInstall(ev: Event) {
 async function action(command: string, id: string) {
   const app = apps.find(a => a.id === id);
   if (!app) return;
+  if (command === 'options') { openOptions(id); return; }
   if (command === 'remove' && !window.confirm('Remove ' + app.name + ' and its saved local profile?')) return;
   try {
-    if (command === 'focus') {
-      await invoke('set_game_focus', { id, enabled: !app.gameFocus });
-      await refresh();
-      notice(!app.gameFocus ? 'Game Focus enabled. Relaunch to apply; Ctrl+Shift+G restores the site.' :
-        'Standard website view enabled. Relaunch to apply.');
-    }
-    else if (command === 'capture') {
+    if (command === 'capture') {
       await invoke('capture_app', { id });
       notice('Capture window opened. Play through the game, then click Save Offline Candidate. Refresh your library after saving.');
     }
@@ -193,4 +294,7 @@ async function action(command: string, id: string) {
 render();
 refresh();
 
-window.addEventListener('focus', () => { if (!busy) refresh(); });
+window.addEventListener('focus', () => { if (!busy && !editingId) refresh(); });
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && editingId && !optionsSaving) closeOptions();
+});
