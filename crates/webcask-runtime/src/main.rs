@@ -136,10 +136,10 @@ fn run() -> Result<(), String> {
     fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let game_focus = app.game_focus;
     let capture_mode = args.iter().any(|arg| arg == "--capture");
-    if capture_mode && !matches!(app.kind, AppKind::Online) {
+    if capture_mode && !matches!(&app.kind, AppKind::Online) {
         return Err("Only online apps can be captured".into());
     }
-    let url = match app.kind {
+    let url = match &app.kind {
         AppKind::Online => app.url.clone().ok_or("Website URL missing")?,
         AppKind::Local => serve_local(&app)?,
     };
