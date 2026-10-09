@@ -1,0 +1,55 @@
+name: Windows alpha build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build SitePocket + WebCask on Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test Rust core
+        run: cargo test -p webcask-core
+      - name: Build independent runtime
+        run: cargo build --release -p webcask-runtime
+      - name: Stage WebCask Runtime for installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/resources | Out-Null
+          Copy-Item target/release/webcask-runtime.exe src-tauri/resources/webcask-runtime.exe
+      - name: Install UI dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build NSIS setup
+        run: npm run tauri build -- --bundles nsis
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SitePocket-Windows-x64
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+      - name: Publish alpha GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-alpha.${{ github.run_number }}
+          name: SitePocket v0.1.0 Alpha (build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: target/release/bundle/nsis/*-setup.exe
+          body: |
+            Experimental Windows x64 build.
+            Standalone WebCask app launching, local HTML5/WASM game folder/ZIP
+            imports, persistent browser profiles and Desktop shortcuts.
+            Automatic capture and offline verification are not yet implemented.
