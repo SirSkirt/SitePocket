@@ -1,10 +1,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{fs, io::{Read, Write}, net::{Ipv4Addr, TcpListener, TcpStream},
-    path::{Component, Path, PathBuf}, thread, time::Duration};
+mod capture;
+use std::{collections::HashSet, fs, io::{Read, Write}, net::{Ipv4Addr, TcpListener, TcpStream},
+    path::{Component, Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
+    thread, time::Duration};
 use webcask_core::{AppKind, InstalledApp};
 use winit::{application::ApplicationHandler, dpi::LogicalSize, event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop}, window::{Window, WindowId}};
+    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy}, window::{Window, WindowId}};
 use wry::{WebContext, WebView, WebViewBuilder};
+
+enum CaptureEvent { Finished(Result<String, String>) }
+
+struct CaptureSession {
+    source: InstalledApp,
+    resources: Arc<Mutex<HashSet<String>>>,
+    saving: Arc<AtomicBool>,
+    proxy: EventLoopProxy<CaptureEvent>,
+}
 
 struct WebCask {
     title: String,
@@ -14,9 +25,25 @@ struct WebCask {
     context: Option<WebContext>,
     profile: PathBuf,
     game_focus: bool,
+    capture: Option<CaptureSession>,
 }
 
-impl ApplicationHandler for WebCask {
+impl ApplicationHandler<CaptureEvent> for WebCask {
+    fn user_event(&mut self, _events: &ActiveEventLoop, event: CaptureEvent) {
+        let CaptureEvent::Finished(result) = event;
+        let message = match result {
+            Ok(value) => value,
+            Err(error) => format!("Capture failed: {error} (close and restart capture to try again)"),
+        };
+        if let Some(view) = &self.webview {
+            if let Ok(payload) = serde_json::to_string(&message) {
+                let _ = view.evaluate_script(&format!(
+                    "window.__webcaskCaptureStatus && window.__webcaskCaptureStatus({payload})"
+                ));
+            }
+        }
+    }
+
     fn resumed(&mut self, events: &ActiveEventLoop) {
         if self.window.is_some() { return; }
         let attrs = Window::default_attributes().with_title(&self.title)
@@ -31,6 +58,45 @@ impl ApplicationHandler for WebCask {
             builder = builder.with_initialization_script_for_main_only(
                 include_str!("game_focus.js"), true
             );
+        }
+        if let Some(session) = &self.capture {
+            // Only capture mode exposes this one-purpose IPC channel to website JS.
+            // Messages cannot request paths, commands or privileged actions.
+            let source = session.source.clone();
+            let seen = session.resources.clone();
+            let saving = session.saving.clone();
+            let proxy = session.proxy.clone();
+            builder = builder
+                .with_initialization_script_for_main_only(include_str!("capture.js"), true)
+                .with_ipc_handler(move |request| {
+                    if request.body().len() > 100_000 { return; }
+                    let Ok(message) = serde_json::from_str::<serde_json::Value>(request.body()) else { return; };
+                    match message.get("kind").and_then(|v| v.as_str()) {
+                        Some("resources") if !saving.load(Ordering::Relaxed) => {
+                            if let Some(urls) = message.get("urls").and_then(|v| v.as_array()) {
+                                if let Ok(mut collected) = seen.lock() {
+                                    for candidate in urls.iter().take(3000) {
+                                        if collected.len() >= 3500 { break; }
+                                        if let Some(url) = candidate.as_str() {
+                                            if url.len() <= 2048 { collected.insert(url.to_owned()); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some("finish") => {
+                            if saving.swap(true, Ordering::SeqCst) { return; }
+                            let urls = seen.lock().map(|g| g.clone()).unwrap_or_default();
+                            let app = source.clone();
+                            let sender = proxy.clone();
+                            thread::spawn(move || {
+                                let result = capture::download_game(app, urls);
+                                let _ = sender.send_event(CaptureEvent::Finished(result));
+                            });
+                        }
+                        _ => {}
+                    }
+                });
         }
         match builder.build(&window) {
             Ok(webview) => {
@@ -69,13 +135,27 @@ fn run() -> Result<(), String> {
     let profile = webcask_core::profile_path(id)?;
     fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let game_focus = app.game_focus;
+    let capture_mode = args.iter().any(|arg| arg == "--capture");
+    if capture_mode && !matches!(app.kind, AppKind::Online) {
+        return Err("Only online apps can be captured".into());
+    }
     let url = match app.kind {
         AppKind::Online => app.url.clone().ok_or("Website URL missing")?,
         AppKind::Local => serve_local(&app)?,
     };
-    let events = EventLoop::new().map_err(|e| e.to_string())?;
-    events.run_app(&mut WebCask { title: app.name, url, window: None,
-        webview: None, context: None, profile, game_focus }).map_err(|e| e.to_string())
+    let events = EventLoop::<CaptureEvent>::with_user_event().build().map_err(|e| e.to_string())?;
+    let capture = if capture_mode {
+        Some(CaptureSession {
+            source: app.clone(),
+            resources: Arc::new(Mutex::new(HashSet::new())),
+            saving: Arc::new(AtomicBool::new(false)),
+            proxy: events.create_proxy(),
+        })
+    } else { None };
+    events.run_app(&mut WebCask {
+        title: if capture_mode { format!("WebCask Capture · {}", app.name) } else { app.name },
+        url, window: None, webview: None, context: None, profile, game_focus, capture
+    }).map_err(|e| e.to_string())
 }
 fn serve_local(app: &InstalledApp) -> Result<String, String> {
     let root = webcask_core::app_path(&app.id)?.join("site")
