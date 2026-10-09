@@ -17,6 +17,11 @@ manager.
 - Serve local games via a read-only 127.0.0.1 HTTP server with WASM MIME,
   path traversal restrictions and cross-origin isolation headers.
 - Create Desktop shortcuts; uninstall apps and remove their local profiles.
+- **Game Focus Mode:** per-app preference expands the largest visible HTML5 canvas
+  or embedded iframe into the window and hides surrounding site elements.
+  Ctrl+Shift+G toggles page/game view; Ctrl+Shift+P lets you pick a game element
+  manually. This changes presentation; it does not download or modify game files.
+  Some websites or custom DOM layouts may not work with the heuristic.
 - Windows Actions build, upload an NSIS installer and create a GitHub prerelease.
 
 **Limitations:** Automatic network game capture and verified offline conversion

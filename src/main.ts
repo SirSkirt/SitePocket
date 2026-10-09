@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import './style.css';
 
-type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null };
+type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null; gameFocus?: boolean };
 type Mode = 'website' | 'game';
 let apps: InstalledApp[] = [];
 let mode: Mode = 'website';
@@ -61,7 +61,9 @@ function renderApp(a: InstalledApp): string {
   return '<article class="app-card"><div class="app-icon ' + (local ? 'game-icon' : '') + '">' + (local ? '▣' : '◎') +
     '</div><div class="app-meta"><h3>' + escapeHtml(a.name) + '</h3><p>' + (local ? 'OFFLINE GAME' : 'WEB APPLICATION') +
     '</p><div class="app-url">' + escapeHtml(local ? 'Local HTML5 / WASM package' : (a.url ?? '')) + '</div></div>' +
-    '<div class="app-actions"><button class="primary" data-action="launch" data-id="' + a.id + '">▶ Launch</button>' +
+    '<div class="app-actions"><button class="secondary focus-toggle" data-action="focus" data-id="' + a.id + '" title="Hide site chrome and expand a detected game canvas or frame; takes effect on next launch">' +
+    (a.gameFocus ? '▣ Game view: ON' : '▤ Game view: OFF') + '</button>' +
+    '<button class="primary" data-action="launch" data-id="' + a.id + '">▶ Launch</button>' +
     '<button class="secondary" data-action="shortcut" data-id="' + a.id + '" title="Create desktop shortcut">↗ Shortcut</button>' +
     '<button class="danger" data-action="remove" data-id="' + a.id + '" title="Uninstall">×</button></div></article>';
 }
@@ -94,7 +96,13 @@ async function action(command: string, id: string) {
   if (!app) return;
   if (command === 'remove' && !window.confirm('Remove ' + app.name + ' and its saved local profile?')) return;
   try {
-    if (command === 'launch') { await invoke('launch_app', { id }); notice('Launching ' + app.name + '…'); }
+    if (command === 'focus') {
+      await invoke('set_game_focus', { id, enabled: !app.gameFocus });
+      await refresh();
+      notice(!app.gameFocus ? 'Game Focus enabled. Relaunch to apply; Ctrl+Shift+G restores the site.' :
+        'Standard website view enabled. Relaunch to apply.');
+    }
+    else if (command === 'launch') { await invoke('launch_app', { id }); notice('Launching ' + app.name + '…'); }
     else if (command === 'shortcut') { const location = await invoke<string>('create_shortcut', { id }); notice('Shortcut created: ' + location); }
     else if (command === 'remove') { await invoke('remove_app', { id }); await refresh(); notice('Application removed.'); }
   } catch (e) { notice(errorText(e), true); }

@@ -17,6 +17,10 @@ fn import_game(name: String, path: String) -> Result<InstalledApp, String> {
 }
 
 #[tauri::command]
+fn set_game_focus(id: String, enabled: bool) -> Result<InstalledApp, String> {
+    webcask_core::set_game_focus(&id, enabled)
+}
+#[tauri::command]
 fn remove_app(id: String) -> Result<(), String> {
     webcask_core::remove_app(&id)
 }
@@ -68,7 +72,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            list_apps, install_website, import_game, remove_app, launch_app, create_shortcut
+            list_apps, install_website, import_game, set_game_focus, remove_app, launch_app, create_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("failed to start SitePocket");

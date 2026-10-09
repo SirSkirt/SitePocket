@@ -13,6 +13,7 @@ struct WebCask {
     webview: Option<WebView>,
     context: Option<WebContext>,
     profile: PathBuf,
+    game_focus: bool,
 }
 
 impl ApplicationHandler for WebCask {
@@ -25,7 +26,13 @@ impl ApplicationHandler for WebCask {
             Ok(w) => w, Err(e) => { eprintln!("Window: {e}"); events.exit(); return; }
         };
         let mut context = WebContext::new(Some(self.profile.clone()));
-        match WebViewBuilder::new_with_web_context(&mut context).with_url(&self.url).build(&window) {
+        let mut builder = WebViewBuilder::new_with_web_context(&mut context).with_url(&self.url);
+        if self.game_focus {
+            builder = builder.with_initialization_script_for_main_only(
+                include_str!("game_focus.js"), true
+            );
+        }
+        match builder.build(&window) {
             Ok(webview) => {
                 self.webview = Some(webview);
                 self.context = Some(context);
@@ -51,13 +58,14 @@ fn run() -> Result<(), String> {
     let app = webcask_core::get_app(id)?;
     let profile = webcask_core::profile_path(id)?;
     fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
+    let game_focus = app.game_focus;
     let url = match app.kind {
         AppKind::Online => app.url.clone().ok_or("Website URL missing")?,
         AppKind::Local => serve_local(&app)?,
     };
     let events = EventLoop::new().map_err(|e| e.to_string())?;
     events.run_app(&mut WebCask { title: app.name, url, window: None,
-        webview: None, context: None, profile }).map_err(|e| e.to_string())
+        webview: None, context: None, profile, game_focus }).map_err(|e| e.to_string())
 }
 fn serve_local(app: &InstalledApp) -> Result<String, String> {
     let root = webcask_core::app_path(&app.id)?.join("site")

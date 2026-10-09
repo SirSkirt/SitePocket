@@ -15,6 +15,8 @@ pub struct InstalledApp {
     pub kind: AppKind,
     pub url: Option<String>,
     pub port: Option<u16>,
+    #[serde(default)]
+    pub game_focus: bool,
 }
 pub fn root() -> Result<PathBuf, String> {
     let path = dirs::data_local_dir().ok_or("Local application data directory unavailable")?.join("SitePocket");
@@ -53,7 +55,7 @@ pub fn install_website(name: &str, address: &str) -> Result<InstalledApp, String
         return Err("Only HTTP(S) websites without embedded credentials are supported".into());
     }
     let app = InstalledApp { id: Uuid::new_v4().to_string(), name, kind: AppKind::Online,
-        url: Some(parsed.to_string()), port: None };
+        url: Some(parsed.to_string()), port: None, game_focus: false };
     let mut apps = list_apps()?;
     apps.push(app.clone());
     save_apps(&apps)?;
@@ -75,7 +77,7 @@ pub fn import_game(name: &str, source: &Path) -> Result<InstalledApp, String> {
     let mut apps = list_apps()?;
     let taken: Vec<u16> = apps.iter().filter_map(|a| a.port).collect();
     let port = (41000..61000).find(|p| !taken.contains(p)).ok_or("No local port available")?;
-    let app = InstalledApp { id, name, kind: AppKind::Local, url: None, port: Some(port) };
+    let app = InstalledApp { id, name, kind: AppKind::Local, url: None, port: Some(port), game_focus: false };
     apps.push(app.clone());
     if let Err(e) = save_apps(&apps) {
         let _ = fs::remove_dir_all(app_path(&app.id)?);
@@ -120,6 +122,16 @@ fn import_files(source: &Path, target: &Path) -> Result<(), String> {
     } else { return Err("Select an HTML5 game folder or .zip file".into()); }
     Ok(())
 }
+/// Persist launch preferences without overwriting other app entries.
+pub fn set_game_focus(id: &str, enabled: bool) -> Result<InstalledApp, String> {
+    Uuid::parse_str(id).map_err(|_| "Invalid application ID".to_string())?;
+    let mut apps = list_apps()?;
+    let entry = apps.iter_mut().find(|a| a.id == id).ok_or("Application not found")?;
+    entry.game_focus = enabled;
+    let updated = entry.clone();
+    save_apps(&apps)?;
+    Ok(updated)
+}
 pub fn remove_app(id: &str) -> Result<(), String> {
     Uuid::parse_str(id).map_err(|_| "Invalid application ID".to_string())?;
     let mut apps = list_apps()?;
@@ -138,9 +150,16 @@ mod tests {
     use super::*;
     #[test]
     fn modes_roundtrip() {
-        let app = InstalledApp { id: Uuid::new_v4().to_string(), name: "Test".into(), kind: AppKind::Local, url: None, port: Some(42000) };
+        let app = InstalledApp { id: Uuid::new_v4().to_string(), name: "Test".into(), kind: AppKind::Local, url: None, port: Some(42000), game_focus: true };
         let value = serde_json::to_string(&app).unwrap();
         let back: InstalledApp = serde_json::from_str(&value).unwrap();
         assert!(matches!(back.kind, AppKind::Local));
+        assert!(back.game_focus);
+    }
+    #[test]
+    fn legacy_records_default_to_website_view() {
+        let old = r#"{"id":"abc","name":"Legacy","kind":"online","url":"https://example.com","port":null}"#;
+        let parsed: InstalledApp = serde_json::from_str(old).unwrap();
+        assert!(!parsed.game_focus);
     }
 }
