@@ -1,0 +1,15 @@
+[package]
+name = "sitepocket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+webcask-core = { path = "../crates/webcask-core" }
+dirs = "6"
