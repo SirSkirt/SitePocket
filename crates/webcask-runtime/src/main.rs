@@ -42,7 +42,17 @@ impl ApplicationHandler for WebCask {
         }
     }
     fn window_event(&mut self, events: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) { events.exit(); }
+        match event {
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                if self.game_focus {
+                    if let Some(webview) = &self.webview {
+                        let _ = webview.evaluate_script("window.__webcaskRescale && window.__webcaskRescale()");
+                    }
+                }
+            }
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => events.exit(),
+            _ => {}
+        }
     }
 }
 fn main() {

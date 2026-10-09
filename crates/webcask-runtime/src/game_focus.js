@@ -15,6 +15,24 @@
   var badge = null;
   var label = null;
   var attempts = 0;
+  var lastViewport = '';
+  var scheduled = false;
+  function scheduleResize() {
+    if (scheduled) return;
+    scheduled = true;
+    window.requestAnimationFrame(function () {
+      scheduled = false;
+      resize();
+    });
+  }
+  // Native window resize can precede WebView2's viewport resize by a frame.
+  // Poll geometry while focused to also handle fullscreen transitions and
+  // game engines that replace their canvas while running.
+  window.__webcaskRescale = function () {
+    scheduleResize();
+    window.setTimeout(scheduleResize, 80);
+    window.setTimeout(scheduleResize, 280);
+  };
 
   function eligible(el) {
     if (!(el instanceof HTMLElement)) return false;
@@ -101,7 +119,8 @@
     styles();
     el.setAttribute('data-webcask-target', 'true');
     document.documentElement.setAttribute('data-webcask-game', 'on');
-    resize();
+    lastViewport = '';
+    window.__webcaskRescale();
     updateBadge('Game view');
   }
   function updateBadge(message) {
@@ -192,7 +211,24 @@
       event.preventDefault(); event.stopImmediatePropagation(); startPicker();
     }
   }, true);
-  window.addEventListener('resize', resize);
+  window.addEventListener('resize', window.__webcaskRescale);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', window.__webcaskRescale);
+  if (window.ResizeObserver) {
+    new ResizeObserver(window.__webcaskRescale).observe(document.documentElement);
+  }
+  window.setInterval(function () {
+    if (!enabled || !current) return;
+    if (!document.contains(current)) {
+      current = null;
+      check();
+      return;
+    }
+    var viewport = window.innerWidth + 'x' + window.innerHeight;
+    if (viewport !== lastViewport) {
+      lastViewport = viewport;
+      window.__webcaskRescale();
+    }
+  }, 150);
   function check() {
     if (current || picker) return;
     attempts++;
