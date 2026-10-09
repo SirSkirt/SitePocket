@@ -45,6 +45,18 @@ fn launch_app(app: tauri::AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn capture_app(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let item = get_app(&id)?;
+    if !matches!(item.kind, webcask_core::AppKind::Online) {
+        return Err("Only websites can be downloaded this way".into());
+    }
+    Command::new(runtime_binary(&app)?)
+        .args(["--app-id", &id, "--capture"])
+        .spawn().map_err(|e| format!("Unable to open capture window: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn create_shortcut(app: tauri::AppHandle, id: String) -> Result<String, String> {
     let entry = get_app(&id)?;
     let exe = runtime_binary(&app)?;
@@ -72,7 +84,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            list_apps, install_website, import_game, set_game_focus, remove_app, launch_app, create_shortcut
+            list_apps, install_website, import_game, set_game_focus, remove_app, launch_app, capture_app, create_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("failed to start SitePocket");

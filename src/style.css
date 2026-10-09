@@ -38,3 +38,7 @@ footer{padding-top:38px;color:#577184;font-size:10px;text-align:center}
 .toast{position:fixed;bottom:20px;right:25px;background:#2e6c62;color:#fff;border-radius:9px;padding:14px 20px;box-shadow:0 10px 35px #071b24;transform:translateY(120px);opacity:0;transition:.3s;pointer-events:none;max-width:500px;font-size:13px}
 .toast.show{transform:translateY(0);opacity:1}.toast.bad{background:#923b52}
 @media(max-width:950px){.shell{grid-template-columns:190px 1fr}.side{padding:20px 9px}main{padding:30px 20px}.form-grid{grid-template-columns:1fr}.app-card{flex-wrap:wrap}.app-actions{width:100%;justify-content:flex-end}}
+
+/* Extra game capture controls may wrap at narrower window widths. */
+.app-actions { flex-wrap: wrap; justify-content: flex-end; }
+.library-head { gap: 12px; flex-wrap: wrap; }

@@ -44,7 +44,7 @@ function render() {
     '</div><div class="form-foot"><span>' + (mode === 'website' ? 'Uses the website online. No PWA manifest required.' : 'Runs locally. index.html must be in the selected root.') +
     '</span><button class="primary" type="submit" ' + (busy ? 'disabled' : '') + '>' +
     (busy ? 'Installing…' : mode === 'website' ? '＋ Install website' : '＋ Import game') + '</button></div></form></section>' +
-    '<section class="library-head"><div><div class="eyebrow">READY TO LAUNCH</div><h2>Installed applications <span>' + itemCount + '</span></h2></div></section>' +
+    '<section class="library-head"><div><div class="eyebrow">READY TO LAUNCH</div><h2>Installed applications <span>' + itemCount + '</span></h2></div><button class="secondary" id="refresh-list">↻ Refresh library</button></section>' +
     '<div class="library">' + (itemCount ? apps.map(renderApp).join('') :
     '<div class="empty"><div class="empty-icon">▦</div><h3>Nothing in your pocket yet</h3><p>Install your first site or import a game to get started.</p></div>') +
     '</div><footer>SitePocket manages your apps · WebCask runs them independently · Windows Alpha</footer></main></div><div id="toast" class="toast"></div>';
@@ -52,6 +52,7 @@ function render() {
     mode = button.dataset.mode as Mode; selectedPath = ''; render();
   });
   document.getElementById('install-form')!.addEventListener('submit', submitInstall);
+  document.getElementById('refresh-list')?.addEventListener('click', refresh);
   document.getElementById('pick-folder')?.addEventListener('click', () => pick(true));
   document.getElementById('pick-zip')?.addEventListener('click', () => pick(false));
   document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(button => button.onclick = () => action(button.dataset.action!, button.dataset.id!));
@@ -63,6 +64,7 @@ function renderApp(a: InstalledApp): string {
     '</p><div class="app-url">' + escapeHtml(local ? 'Local HTML5 / WASM package' : (a.url ?? '')) + '</div></div>' +
     '<div class="app-actions"><button class="secondary focus-toggle" data-action="focus" data-id="' + a.id + '" title="Hide site chrome and expand a detected game canvas or frame; takes effect on next launch">' +
     (a.gameFocus ? '▣ Game view: ON' : '▤ Game view: OFF') + '</button>' +
+    (local ? '' : '<button class="secondary" data-action="capture" data-id="' + a.id + '" title="Open the game online, explore levels, then capture observed same-origin assets">↓ Capture offline</button>') +
     '<button class="primary" data-action="launch" data-id="' + a.id + '">▶ Launch</button>' +
     '<button class="secondary" data-action="shortcut" data-id="' + a.id + '" title="Create desktop shortcut">↗ Shortcut</button>' +
     '<button class="danger" data-action="remove" data-id="' + a.id + '" title="Uninstall">×</button></div></article>';
@@ -102,6 +104,10 @@ async function action(command: string, id: string) {
       notice(!app.gameFocus ? 'Game Focus enabled. Relaunch to apply; Ctrl+Shift+G restores the site.' :
         'Standard website view enabled. Relaunch to apply.');
     }
+    else if (command === 'capture') {
+      await invoke('capture_app', { id });
+      notice('Capture window opened. Play through the game, then click Save Offline Candidate. Refresh your library after saving.');
+    }
     else if (command === 'launch') { await invoke('launch_app', { id }); notice('Launching ' + app.name + '…'); }
     else if (command === 'shortcut') { const location = await invoke<string>('create_shortcut', { id }); notice('Shortcut created: ' + location); }
     else if (command === 'remove') { await invoke('remove_app', { id }); await refresh(); notice('Application removed.'); }
@@ -109,3 +115,5 @@ async function action(command: string, id: string) {
 }
 render();
 refresh();
+
+window.addEventListener('focus', () => { if (!busy) refresh(); });

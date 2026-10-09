@@ -23,6 +23,8 @@ jobs:
           node-version: '22'
       - name: Test Rust core
         run: cargo test -p webcask-core
+      - name: Test capture path and runtime
+        run: cargo test -p webcask-runtime
       - name: Build independent runtime
         run: cargo build --release -p webcask-runtime
       - name: Stage WebCask Runtime for installer
@@ -52,4 +54,5 @@ jobs:
             Experimental Windows x64 build.
             Standalone WebCask app launching, local HTML5/WASM game folder/ZIP
             imports, persistent browser profiles and Desktop shortcuts.
-            Automatic capture and offline verification are not yet implemented.
+            New: Game Focus resize fixes and experimental same-origin game capture.
+            Downloads are unverified offline candidates, not guaranteed offline games.

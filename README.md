@@ -22,10 +22,22 @@ manager.
   Ctrl+Shift+G toggles page/game view; Ctrl+Shift+P lets you pick a game element
   manually. This changes presentation; it does not download or modify game files.
   Some websites or custom DOM layouts may not work with the heuristic.
+- **Experimental website-to-offline capture:** on an online app choose "Capture offline",
+  explore it while online to discover resource requests, then click "Save Offline
+  Candidate" (or Ctrl+Shift+S). WebCask downloads observed same-origin resources,
+  follows local HTML/CSS/JS references, and registers a separate local game entry.
+  The manager's "Refresh library" button displays the result.
 - Windows Actions build, upload an NSIS installer and create a GitHub prerelease.
 
-**Limitations:** Automatic network game capture and verified offline conversion
-are NOT implemented yet. Import requires a game with local assets. Network-only
+**Limitations:** This experimental downloader does NOT guarantee playable offline
+games: only HTTP(S) resources from the same origin are fetched; CDNs, server
+authentication, cookie-dependent requests, streaming multiplayer, and dynamic
+asset URL generation can prevent offline play. Captures use a separate browser
+profile for the downloaded game, so existing online saves may not carry over.
+No bypass of DRM, paid access, login protection or usage permissions is attempted.
+The report in each downloaded game's directory records missing resources and
+marks offline status "unverified"; **test by disconnecting your network**.
+Imports require a game with local assets. Network-only
 features will stay network-dependent. The localhost server uses a stable per-app
 port (a port conflict prevents launch), does not stream large files or support
 HTTP Range requests in this alpha. Shortcuts use a shared runtime icon and
