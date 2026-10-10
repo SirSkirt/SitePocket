@@ -282,6 +282,10 @@ function renderOptions(): string {
     '<label for="opt-height">WINDOW HEIGHT (PX)' +
     '<input class="options-size-field" id="opt-height" type="number" min="320" max="2160" step="1" required value="' +
     (app.windowHeight ?? 760) + '"' + (mode === 'windowed' ? '' : ' disabled') + '></label></div>' +
+    (onAndroid && app.kind === 'local' ? '<div class="touch-options-summary"><div><strong>Diagnostic isolation</strong>' +
+    '<p>Test the game without WebCask page scripts (touch controls, page debugger or Game Focus). Native console capture stays enabled.</p>' +
+    '</div><button type="button" class="secondary" data-action="launch-native-only" data-id="' + app.id +
+    '">Launch native-only</button></div>' : '') +
     '<div class="touch-options-summary"><div><strong>Touchscreen controls</strong><p>' +
     ((app.touchButtons || []).length || 7) + ' mapped buttons · ' + (app.touchEnabled === false ? 'Disabled' : 'Enabled') +
     '</p></div><button type="button" class="secondary" id="edit-touch-layout">Edit Touch Layout</button></div>' +
@@ -553,7 +557,10 @@ async function submitInstall(ev: Event) {
 
 function selectedDebugEvents(): DebugEvent[] {
   if (!debugActiveApp) return [];
-  return debugEvents.filter(event => event.appId === debugActiveApp).slice(-40);
+  // Native events arrive after Rust events, so event IDs alone are not
+  // chronological. Preserve all useful history and sort by actual time.
+  return debugEvents.filter(event => event.appId === debugActiveApp)
+    .slice(-70).sort((a, b) => (a.time - b.time) || (a.id - b.id));
 }
 function reportText(): string {
   const records = selectedDebugEvents();
@@ -582,6 +589,12 @@ function debugDiagnosis(event: DebugEvent): string {
     return 'Android itself detected the WebCask Activity UI thread stopped responding, independently of any game script. Check the last native Activity stage in the report.';
   if (event.code === 'native-renderer-unresponsive')
     return 'Android reported the WebView renderer is unresponsive. This can be caused by intensive game code or the WebView engine; the native and game events help separate them.';
+  if (event.code === 'native-console-hook-timeout')
+    return 'The native console logger was not ready. WebCask deliberately did not navigate to the game, so this is not evidence of a game error.';
+  if (event.code === 'opaque-script-error')
+    return 'A script failed without a filename, line or stack. Its source is unknown. Compare a normal launch with Launch native-only.';
+  if (event.code === 'native-instrumentation-error')
+    return 'WebCask detected its own diagnostic JavaScript failing. This is an instrumentation issue, not a confirmed game defect.';
   if (event.code === 'native-console-error')
     return 'Android captured a WebView console error through its native WebChromeClient, even if WebCask JavaScript diagnostics could not start.';
   if (event.code === 'startup-timeout')
@@ -679,14 +692,20 @@ async function action(command: string, id: string) {
       await invoke('capture_app', { id });
       notice('Capture window opened. Play through the game, then click Save Offline Candidate. Refresh your library after saving.');
     }
-    else if (command === 'launch') { await invoke('launch_app', { id }); notice('Launching ' + app.name + '…'); await pollDebugger(); }
+    else if (command === 'launch' || command === 'launch-native-only') {
+      await invoke('launch_app', { id, nativeOnly: command === 'launch-native-only' });
+      notice(command === 'launch-native-only'
+        ? 'Launching ' + app.name + ' with native diagnostics only (WebCask page scripts disabled).'
+        : 'Launching ' + app.name + '…');
+      await pollDebugger();
+    }
     else if (command === 'shortcut') { const location = await invoke<string>('create_shortcut', { id }); notice('Shortcut created: ' + location); }
     else if (command === 'remove') { await invoke('remove_app', { id }); await refresh(); notice('Application removed.'); }
   } catch (e) {
-    if (command === 'launch') {
+    if (command === 'launch' || command === 'launch-native-only') {
       await pollDebugger();
     }
-    if (command === 'launch' && app.kind === 'local' && mode === 'game') {
+    if ((command === 'launch' || command === 'launch-native-only') && app.kind === 'local' && mode === 'game') {
       formMessage('error', 'Could not launch ' + app.name + ': ' + errorText(e));
     } else {
       notice(errorText(e), true);
