@@ -148,7 +148,7 @@
     updateBadge('Game view');
   }
   function updateBadge(message) {
-    if (label) label.textContent = message;
+    if (label && label.textContent !== message) label.textContent = message;
   }
   function overlay() {
     if (!document.body || badge) return;
