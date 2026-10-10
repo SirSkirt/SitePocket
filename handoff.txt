@@ -3,10 +3,63 @@ SITEPOCKET + WEBCASK RUNTIME — PROJECT HANDOFF
 Updated: 2026-10-10 (native console ordering and instrumentation isolation)
 Repository: https://github.com/SirSkirt/SitePocket
 Branch: main
-Last implementation commit before this handoff update: 98f99a1183cd168433956c2da513f83510eb511a
-Status: BlockBend now launches on the user's S25 Ultra; anonymous script errors persist.
-Native-preload console ordering + A/B isolation changes pushed. CI/build/release for
-these latest changes NOT YET CONFIRMED; no on-device test of them yet.
+Last implementation commit before this handoff update: 8610f02df1184e12382d36e63cbf66e39092cbdf
+Status: Native-only Android console-hook gate blocked game launch because Rust
+used app_id while Kotlin required appId. Bridge root cause identified and fixed
+in main; updated APK/CI and device re-test still UNVERIFIED. Earlier
+opaque script errors remain unattributed.
+
+LATEST PHONE REPORT — 2026-10-10 20:22 UTC (NATIVE-ONLY)
+------------------------------------------------------
+S25 Ultra report shows Android native console capture REALLY WAS attached
+at 20:21:59.314Z before game navigation. However Rust timed out at
+20:22:06.319Z because its native game identity registration failed:
+  native-logger-setup-failed:
+  Native logger setup: Could not initialize Android native logger:
+  lateinit property appId has not been initialized
+Root cause CONFIRMED in repo: Rust serialized ActiveGameRequest.app_id as
+"app_id" (serde default); Kotlin @InvokeArg ActiveGameArgs requires "appId".
+Kotlin never persisted activeGameId; native journal events were untagged.
+Rust's hook_confirmed correctly required matching appId, so it could not
+accept the real native-console-hook-installed event. This was a WebCask
+bridge bug, NOT a BlockBend rendering error or missing WebView hook.
+
+PATCHES PUSHED TO MAIN (NEWER THAN LAST HANDOFF):
+- Rust native plugin bridge: add serde rename_all="camelCase" to the
+  ActiveGameRequest wire type (now sends appId). Struct available on
+  desktop CI too; regression test serializes request and verifies appId,
+  absence of app_id. Add serde_json dev dependency.
+- Kotlin ZipImportPlugin: initialized appId field defaults to empty;
+  explicit blank appId validation produces readable error rather than
+  uninitialized lateinit failure. UUID check/prefs commit retained.
+- Android player: set_active_game failure is now an immediate hard launch
+  error with native-logger-setup-failed. After success log
+  native-logger-game-id-ready then proceed with blank bootstrap, wait for
+  confirmed matching console hook, navigate to game.
+- Windows release workflow adds cargo test -p tauri-plugin-android-zip-import.
+  Both pipelines' existing Node diagnostics test now also asserts Rust and
+  Kotlin use matching appId wire names.
+- README updated for this issue.
+LAST IMPLEMENTATION COMMIT BEFORE THIS HANDOFF UPDATE:
+  8610f02df1184e12382d36e63cbf66e39092cbdf
+CI BUILD STATUS OF THIS PATCH: UNVERIFIED (no post-push run/artifact listing
+available via connected GitHub tool in this chat).
+DO NOT claim a new APK has successfully built/been released or that phone
+validation has passed yet.
+
+NEXT PHONE TEST:
+1. Confirm latest Android workflow and published APK are successful; install
+   newer APK IN PLACE to preserve imported game files and save data.
+2. Clear historical debugger events, launch BlockBend in native-only mode.
+3. Expected stages: native-logger-game-id-ready ->
+   native-console-hook-installed -> native-console-before-game ->
+   webview-navigation-started/finished. There should be neither
+   native-logger-setup-failed nor native-console-hook-timeout.
+4. Then compare NORMAL launch and native-only native-console logs for the
+   earlier five opaque "Script error." events; their origin remains UNKNOWN.
+5. If native console already hooked but navigation still blocked, check
+   journal read / timestamp / per-app ID; do not just raise watchdog timeout.
+No changes to BlockBend code or Android signer were made.
 
 READ THIS FIRST (FOR THE NEXT CHAT / DEVELOPER)
 ------------------------------------------------
