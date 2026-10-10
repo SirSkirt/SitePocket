@@ -1,0 +1,245 @@
+SITEPOCKET + WEBCASK RUNTIME — PROJECT HANDOFF
+===========================================
+Updated: 2026-10-10
+Repository: https://github.com/SirSkirt/SitePocket
+Branch: main
+Current source baseline: a03273e249c6228f8b83746d9583f1ed7e3bc09d
+Status: Windows and Android CI builds successful; Android BlockBend launch freeze NOT YET RESOLVED.
+
+READ THIS FIRST (FOR THE NEXT CHAT / DEVELOPER)
+------------------------------------------------
+SitePocket is the app/game installer and manager. WebCask Runtime is the
+underlying game/web-app runtime. The user is building an open-source tool to
+install websites, PWA-like apps, and locally exported HTML5/JS/WASM games
+without requiring the original web game's site or the SitePocket UI to remain
+open on Windows. Android is a newer port using a native Android WebView player.
+
+Work directly in THIS GitHub repository via the connected GitHub tools.
+Inspect existing code and GitHub Actions before editing. Keep changes
+modular; preserve existing Windows behavior while adding Android features.
+Push changes, let CI compile, fix errors, verify actual GitHub Release assets,
+and distinguish "CI passed" from "tested successfully on a physical device".
+When work continues, UPDATE THIS HANDOFF after material changes.
+
+LATEST VERIFIED RELEASES (as of this handoff)
+----------------------------------------------
+Android: v0.1.0-android-preview.12
+  https://github.com/SirSkirt/SitePocket/releases/tag/v0.1.0-android-preview.12
+  Asset: app-universal-debug.apk
+  CI: https://github.com/SirSkirt/SitePocket/actions/runs/38069813757
+  Status: successful, APK uploaded/published, Android signing verified.
+Windows: v0.1.0-alpha.23
+  https://github.com/SirSkirt/SitePocket/releases/tag/v0.1.0-alpha.23
+  Asset: SitePocket_0.1.0_x64-setup.exe
+  CI: https://github.com/SirSkirt/SitePocket/actions/runs/38069813721
+  Status: successful, NSIS installer published.
+These releases are PREVIEW/ALPHA builds, not production-quality claims.
+Both point to source commit a03273e249c6228f8b83746d9583f1ed7e3bc09d.
+
+PROJECT ARCHITECTURE
+--------------------
+- SitePocket frontend: src/main.ts, src/style.css (TypeScript, Tauri 2,
+  styled dark-blue/teal interface). UI handles library, import, Game Options,
+  icons, touch layouts, and debugger popups.
+- Tauri Rust manager backend: src-tauri/src/lib.rs
+- Shared Rust authoritative data/registry/importer:
+  crates/webcask-core/src/lib.rs
+  The InstalledApp registry contains per-app ID/name/kind, URL or local port,
+  entry point, Game View, window mode/size, and Android touch mappings.
+- Windows standalone runner:
+  crates/webcask-runtime/src/main.rs (Wry/WebView2);
+  src-tauri/resources/webcask-runtime.exe is packaged into installer.
+  Windows game/app shortcuts launch WebCask independently of manager.
+- Android player: src-tauri/src/android_player.rs
+  Opens second Tauri WebViewWindow in a registered WebCaskActivity.
+- Android local game server: src-tauri/src/mobile_server.rs.
+  Serves extracted HTML5 content using a read-only loopback HTTP origin
+  (127.0.0.1:<game-port>), with correct WASM MIME and path traversal checks.
+  No need for internet for genuinely self-contained ZIP games.
+- ZIP importer: crates/webcask-core/src/lib.rs; Android document staging via
+  crates/tauri-plugin-android-zip-import and Kotlin ContentResolver.
+- Icon handling: src-tauri/src/icons.rs; installed apps can use automatic
+  favicons/bundled icons or user-supplied custom images. Windows shortcuts
+  receive the selected ICO. Android icon matches the Windows SitePocket logo.
+- Android native files: src-tauri/android/WebCaskActivity.kt,
+  WebCaskNativeLog.kt, WebCaskSplitInitializer.kt,
+  webcask_split_config.xml. Kotlin bridge:
+  crates/tauri-plugin-android-zip-import/android/src/main/java/
+  dev/sitepocket/zipimport/ZipImportPlugin.kt.
+- Debugger Rust store: src-tauri/src/diagnostics.rs; JS game-side collection:
+  src-tauri/src/android_debug.js; in-game touch controls:
+  src-tauri/src/android_touch.js; manager debugger UI in src/main.ts.
+- CI:
+  .github/workflows/windows-release.yml
+  .github/workflows/android-release.yml
+  .github/scripts/setup-webcask-android.py
+
+IMPLEMENTED USER-VISIBLE FEATURES
+----------------------------------
+WINDOWS:
+- Install URL as individual website/app even without PWA manifest.
+- Import local HTML5/JS/WASM games from folders or ZIP files.
+- Detailed import failure messages next to Import Game button.
+- Standalone WebCask runner, individual browser profiles, desktop shortcuts.
+- Game View/Game Focus (expands canvas/iframe), windowed/maximized/fullscreen
+  launch options, per-game window size and saved defaults.
+- Experimental same-origin online-game capture into an offline candidate.
+  This cannot guarantee all game files or support DRM/auth/CDNs.
+- Discover/download website icons, detect local game icons, customize icons,
+  propagate chosen icons to shortcuts and windows.
+
+ANDROID PREVIEW:
+- Android 12L+ (minSdk 32), arm64 preview, Android system WebView.
+- Import HTML5 game ZIPs using Android Files and a native ContentResolver
+  bridge, extract into per-app data. The user VERIFIED ZIP import now works.
+  Android folder importing remains unsupported.
+- Per-game on-screen controls: editable positions, labels, button sizes,
+  keyboard key mappings, up to 24 buttons, hold/multi-touch and toggle.
+  These emit SYNTHETIC DOM KeyboardEvents; some games ignore them, particularly
+  games needing trusted events or cross-origin iframes.
+- Local offline game server for imported ZIP content; does not currently
+  support HTTP Range requests; externally hosted assets still require network.
+- Android APKs use a stable DEVELOPMENT preview signing identity and
+  incremental Android version codes. Old previews 1–6 used changing signers
+  and required ONE uninstall when migrating. Preview 7 onward should update
+  in place as long as same signing identity and higher version code are used.
+  Preserve app ID dev.sitepocket.desktop to avoid breaking installs.
+- Important security caveat: the preview keystore is currently committed to
+  the repo for testing. It MUST be replaced by a privately held production key
+  in GitHub encrypted secrets BEFORE any public/production/Play Store release.
+  Do not publish keystore passwords or raw key contents in reports.
+
+CRITICAL CURRENT BUG: ANDROID GAME LAUNCH FREEZE
+------------------------------------------------
+User has an imported HTML5 ZIP for BLOCKBEND (their independent voxel sandbox
+game). ZIP IMPORT IS WORKING on Android, but pressing Launch froze SitePocket.
+We want to determine whether WebCask's Android player/window handling or
+the game's own code/assets caused the hang.
+
+ACTUAL USER-SUPPLIED DEBUG REPORT:
+  App: BlockBend
+  Device: Samsung Galaxy S25 Ultra, Android 16, Chrome WebView 153
+  2026-10-10T16:43:32.078Z [INFO] RUNTIME / server-started
+    Local game server listening at 127.0.0.1:41000
+  2026-10-10T16:43:32.080Z [INFO] RUNTIME / launch-started
+    Preparing WebCask Android player
+  2026-10-10T16:43:54.081Z [ERROR] RUNTIME / startup-timeout
+    No page-ready signal within 22 seconds.
+There were NO webview-created, navigation, game-script, or asset-failure
+events in the original report. That makes player Activity/WebView startup
+a PRIME SUSPECT, but does NOT PROVE the game is good or that WebCask is bad.
+The original JS diagnostic script may never have executed.
+
+REPAIRS JUST MADE (BUILT SUCCESSFULLY AS PREVIEW.12; NOT YET PHONE-TESTED)
+-------------------------------------------------------------------------
+1. Android player uses .activity_name("WebCaskActivity") and registers a
+   secondary Android Activity/AndroidX Window embedding support. The Tauri
+   launch command was made async with spawn_blocking to avoid blocking the
+   manager's synchronous IPC while the Activity initializes.
+2. New "android-activity-build-requested" diagnostic stage before
+   WebviewWindowBuilder::build().
+3. Native Kotlin logger independent of injected game JavaScript:
+   - Activity onCreate/onResume/onPause/onDestroy milestones.
+   - Native WebView object creation, progress.
+   - WebChromeClient console warnings/errors.
+   - Renderer unresponsive/responsive callbacks.
+   - Background native Activity UI-thread heartbeat; flags >12s stalls.
+   - Events written to bounded app-private JSONL journal AND Android Logcat
+     tag "WebCaskNative".
+   - Rust bridge reads journal, deduplicates/merges with JS/Rust debugger
+     timeline; manager popup supports Copy Report and retains events across
+     restarts. Does not automatically upload diagnostics.
+4. Fixed GitHub Android workflow corruption. It previously duplicated/
+   interleaved blocks and GitHub created no jobs. Current valid workflow is
+   restored from Preview.9 and invokes:
+     python3 .github/scripts/setup-webcask-android.py
+   AFTER 'npx tauri android init --ci' to copy native Kotlin Activity/logger,
+   register manifest entries and AndroidX dependencies. PREVIEW.12 PASSED CI.
+
+EXPECTED DEBUGGER TIMELINE AFTER NEXT TEST:
+  runtime launch-started
+  android-activity-build-requested
+  native-activity-create-requested
+  native-activity-created
+  native-webview-created
+  native-webview-progress / console events
+  webview-navigation-started / finished, page-ready
+Compare the last confirmed stage; don't assume a timeout proves a game bug.
+Note that even a native logger cannot log before Android launches its
+Activity. If only 'android-activity-build-requested' appears, investigate
+Android window creation, activity registration, Tauri event loop, and
+AndroidX embedding. If renderer-unresponsive appears, examine game load
+and WebView renderer behavior. If actual console JS exceptions appear,
+examine game code. The native logging modifications are unverified in situ.
+
+NEXT STEPS — PRIORITY ORDER
+---------------------------
+1. ASK USER TO INSTALL Preview.12 OVER THEIR CURRENT Preview.9 (same signer),
+   launch the SAME imported BlockBend ZIP, and share the new Copy Report.
+   If frozen, wait ~15–25 seconds then return to/reopen SitePocket.
+   This is the primary missing evidence.
+2. Compare Rust, native Android and page-side stages. Determine if the
+   freeze is in Activity creation, WebView creation, rendering, HTTP serving
+   or game scripts. If app hangs too hard for popup, use the persisted report
+   after restart and optionally 'adb logcat -s WebCaskNative' if available.
+3. Fix the narrowest confirmed cause, preserving Windows behavior, user game
+   library/saves, Android touch controls, security isolation, and diagnostics.
+   Do not simply increase the watchdog timeout to mask the failure.
+4. Test both GitHub workflows; fix actual compiler errors and confirm the
+   new tag contains a real APK/NSIS asset. Then ask user for physical-phone
+   test. Consider a dedicated minimal local HTML5 ZIP test to isolate WebView
+   infrastructure from BlockBend-specific code.
+5. Future work: Android folder picker (ZIP works now), robust HTTP Range
+   serving for media-heavy games, capture improvements, native keyboard
+   injection alternatives if trustworthy/appropriate, improve debugging
+   for hard native process crashes, remove test signing key from production.
+
+BUILD AND RELEASE PROCEDURES
+----------------------------
+Windows on every push to main:
+  .github/workflows/windows-release.yml
+  cargo test -p webcask-core
+  cargo test -p webcask-runtime
+  cargo build --release -p webcask-runtime
+  stage WebCask EXE at src-tauri/resources/webcask-runtime.exe
+  cargo test -p sitepocket
+  npm install --no-audit --no-fund
+  npm run tauri build -- --bundles nsis
+  publish prerelease tag v0.1.0-alpha.<GitHub-run-number>
+
+Android on every push to main:
+  .github/workflows/android-release.yml
+  Ubuntu, JDK 17, Node 22, Android SDK API 35 / build-tools 35, NDK,
+  Rust aarch64-linux-android target
+  npx tauri icon src-tauri/icons/icon.png
+  npx tauri android init --ci
+  configure Android loopback HTTP security policy
+  python3 .github/scripts/setup-webcask-android.py
+  apply fixed DEV signing identity and increasing versionCode
+  npx tauri android build --apk --debug --target aarch64
+  verify signature/package, upload and publish tag
+    v0.1.0-android-preview.<GitHub-run-number>
+  APK usually named app-universal-debug.apk
+  The latest pipeline was green as Android Preview.12.
+
+IMPORTANT CONTEXT AND GUARDRAILS
+--------------------------------
+- This is an INDEPENDENT HTML5/JS/WASM launcher, not a project whose runtime
+  should depend on an upstream game such as Tweetcraft. BlockBend is an
+  independent user-developed voxel game used for testing.
+- User prefers separate, replaceable modules and functionality based on
+  generic web games, rather than reproducing one game's internals.
+- Preserve each app's own files, browser profile and settings across updates.
+- ZIP extraction, pathname validation and HTTP loopback origin security are
+  important. Do not allow arbitrary website native API access or unrestricted
+  file access. Never assume file:// is adequate for WASM/fetch/workers.
+- SitePocket UI styling: dark navy/teal, compact, in-app messages. Debugger
+  only opens when an error occurs, and should allow Copy/Clear/Close.
+- The GitHub repository is currently PRIVATE. Use connected GitHub tools for
+  edits. Do not accidentally flip visibility, change license, or upload secrets.
+- README.md contains detailed implementation notes and caveats. Review it.
+- A successful CI build does NOT mean mobile gameplay is verified.
+- After substantial changes: update this handoff.txt with new commit/build
+  status, remaining blockers and immediate next test.
+
+END OF HANDOFF
