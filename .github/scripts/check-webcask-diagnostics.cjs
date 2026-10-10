@@ -67,4 +67,16 @@ broken.emit('error', {
 });
 assert.equal(broken.warnings.length, 1);
 assert.match(broken.warnings[0], /WebCask diagnostics internal failure/);
+
+const nativeRustBridge = fs.readFileSync('crates/tauri-plugin-android-zip-import/src/lib.rs', 'utf8');
+const nativeKotlinBridge = fs.readFileSync(
+  'crates/tauri-plugin-android-zip-import/android/src/main/java/dev/sitepocket/zipimport/ZipImportPlugin.kt',
+  'utf8'
+);
+assert.match(nativeRustBridge,
+  /#\[serde\(rename_all = "camelCase"\)\]\s*struct ActiveGameRequest\s*\{\s*app_id: String\s*\}/,
+  'Rust ActiveGameRequest must serialize the appId field expected by Kotlin');
+assert.match(nativeKotlinBridge, /var appId: String/,
+  'Kotlin ActiveGameArgs must accept the camelCase appId field');
+
 console.log('WebCask diagnostics isolation tests passed.');
