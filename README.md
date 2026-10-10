@@ -378,3 +378,36 @@ pair caused by rotation. The game should retain its scene, state and input.
 Other Android lifecycle events (e.g. process death) can still recreate the
 Activity; they need separate save/restore testing. New builds and actual
 phone behavior have not yet been verified by this documentation.
+
+### Shared Game View recovery on PC and Android
+
+Game View is the **same opt-in** `game_focus.js` presentation layer on
+Windows Wry/WebView2 and Android Tauri/Wry. The persisted `gameFocus`
+setting is applied on the next normal game launch. On Android,
+**Launch native-only deliberately disables Game View**, the touch layer and
+the injected page debugger; use normal **Launch** to test Game View.
+
+The legacy detector only accepted canvases/iframes at least 240x150 CSS
+pixels and stopped checking after 30 tries. If a modern engine builds a
+canvas asynchronously, replaces it, or runs in a smaller Android viewport,
+Game View could silently never select a renderer. The shared script now:
+
+- Keeps searching at low frequency for late-created canvases and dynamically
+  replaces a detached game target without requiring navigation or a reload.
+- Triggers an additional throttled search when the DOM changes.
+- Supports smaller 120x80 canvases and named game-root containers.
+- Prefers a specific named wrapper around the renderer when available,
+  preserving its HTML HUD and menu siblings instead of hiding them.
+- Preserves the existing on-page Toggle/Pick UI, keyboard controls, and
+  original CSS state when returning to Website View.
+- Shows `Waiting for game canvas · Pick` while searching. If this badge does
+  not appear during a **normal launch with Game View enabled**, investigate
+  injection or the stored app option rather than the canvas detector.
+
+`.github/scripts/check-webcask-game-focus.cjs` contains simulated DOM
+regression cases for immediate and late canvases, replacement, toggle,
+named wrappers, DOM-only roots and small screens. Both Android and
+Windows release CI workflows execute these tests before building.
+
+The fixes are source-level changes pending compiled-release and physical
+device verification; they do not modify imported game assets or save data.
