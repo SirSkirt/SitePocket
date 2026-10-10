@@ -13,7 +13,8 @@ import java.util.UUID
 
 @InvokeArg
 internal class ActiveGameArgs {
-    lateinit var appId: String
+    // Defaults to empty so a wire-schema mismatch is reported explicitly.
+    var appId: String = ""
 }
 
 @InvokeArg
@@ -43,6 +44,9 @@ class ZipImportPlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
         try {
+            if (args.appId.isBlank()) {
+                throw IllegalArgumentException("Missing appId in native logger request (Rust/Kotlin field mismatch)")
+            }
             UUID.fromString(args.appId)
             val saved = activity.getSharedPreferences("webcask-native-debug", Activity.MODE_PRIVATE)
                 .edit().putString("activeGameId", args.appId).commit()
