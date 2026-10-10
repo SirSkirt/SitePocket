@@ -3,6 +3,8 @@
 // Errors and diagnostics are bounded and persist in Rust across app restarts.
 (() => {
   'use strict';
+  // A failure in OUR instrumentation must not turn into a GAME exception.
+  try {
   const allowedOrigin = __WEBCASK_ALLOWED_ORIGIN__;
   if (location.origin !== allowedOrigin || window !== window.top) return;
   if (window.__webcaskDiagnosticInstalled) return;
@@ -61,22 +63,27 @@
   }
 
   function send(kind, message, detail = '') {
-    if (remaining-- <= 0) return;
-    // Never capture full page contents, cookies, form values, or game storage.
-    const payload = JSON.stringify({
-      kind, message: String(message || '').slice(0, 500),
-      detail: String(detail || '').slice(0, 1800)
-    });
-    if (kind === 'script-error' || kind === 'promise-error') {
-      showGameError(kind, message, detail);
-    }
     try {
+      if (remaining-- <= 0) return;
+      // Never capture full page contents, cookies, form values, or game storage.
+      const payload = JSON.stringify({
+        kind, message: String(message || '').slice(0, 500),
+        detail: String(detail || '').slice(0, 1800)
+      });
+      // Do not interrupt gameplay with a modal for opaque errors whose
+      // source may be cross-origin code, Tauri, or our own initialization.
+      if (kind === 'script-error' || kind === 'promise-error') {
+        showGameError(kind, message, detail);
+      }
       fetch(endpoint, {
         method: 'POST', mode: 'same-origin', credentials: 'omit',
         headers: { 'Content-Type': 'text/plain' },
         body: payload, keepalive: true
       }).catch(() => {});
-    } catch (_) {}
+    } catch (error) {
+      // Identifiable in the native WebChromeClient log; not reported as game.
+      console.warn('[WebCask diagnostics internal failure]', String(error));
+    }
   }
   window.addEventListener('error', event => {
     if (event.target && event.target !== window) {
@@ -87,9 +94,13 @@
       }
       return;
     }
-    send('script-error', event.message || 'Uncaught JavaScript exception',
-      [event.filename || '', event.lineno || '', event.colno || '',
-       event.error && event.error.stack || ''].join(' | '));
+    const opaque = event.message === 'Script error.' &&
+      !event.filename && !event.lineno && !event.colno && !event.error;
+    send(opaque ? 'opaque-script-error' : 'script-error',
+      opaque ? 'Opaque script error (origin unverified)' : (event.message || 'Uncaught JavaScript exception'),
+      opaque ? 'No filename, line, column or stack. Native console + native-only launch are required to attribute this.'
+        : [event.filename || '', event.lineno || '', event.colno || '',
+           event.error && event.error.stack || ''].join(' | '));
   }, true);
   window.addEventListener('unhandledrejection', event => {
     const reason = event.reason;
@@ -113,4 +124,8 @@
     });
     watcher.observe({type:'longtask', buffered:false});
   } catch (_) { /* Long-task API is optional on Android WebView. */ }
+  } catch (error) {
+    // Fail open: diagnostics must never prevent the game from running.
+    console.warn('[WebCask diagnostics initialization failure]', String(error));
+  }
 })();
