@@ -36,6 +36,8 @@ jobs:
         run: cargo test -p sitepocket
       - name: Install UI dependencies
         run: npm install --no-audit --no-fund
+      - name: Test WebCask page diagnostics for false attribution
+        run: node .github/scripts/check-webcask-diagnostics.cjs
       - name: Build NSIS setup
         run: npm run tauri build -- --bundles nsis
       - name: Upload Windows installer
