@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const script = fs.readFileSync('crates/webcask-runtime/src/game_focus.js', 'utf8');
 
-function browser() {
+function browser(startBeforeDomReady = false) {
   const intervals = [];
   let timeouts = [];
   const observers = [];
@@ -70,7 +70,9 @@ function browser() {
   html.appendChild(head); html.appendChild(body);
   const docEvents = {};
   const document = {
-    documentElement: html, head, body, readyState: 'complete',
+    documentElement: startBeforeDomReady ? null : html, head,
+    body: startBeforeDomReady ? null : body,
+    readyState: startBeforeDomReady ? 'loading' : 'complete',
     contains: el => html.contains(el),
     createElement: tag => new Element(tag),
     querySelectorAll(selectors) {
@@ -107,7 +109,10 @@ function browser() {
   };
   window.top = window;
   function run() {
-    vm.runInNewContext(script, { window, document, HTMLElement: Element, MutationObserver: Observer }, {
+    vm.runInNewContext(script, {
+      window, document, HTMLElement: Element,
+      MutationObserver: Observer, ResizeObserver: window.ResizeObserver
+    }, {
       timeout: 1200, filename: 'game_focus.js'
     });
   }
@@ -124,7 +129,35 @@ function browser() {
     return el;
   }
   function badge() { return document.querySelectorAll('[data-webcask-overlay]')[0]; }
-  return { window, document, body, html, element, run, tick, badge };
+  function domReady() {
+    document.documentElement = html;
+    document.body = body;
+    document.readyState = 'complete';
+    (docEvents.DOMContentLoaded || []).forEach(fn => fn());
+  }
+  return { window, document, body, html, element, run, tick, badge, domReady };
+}
+
+// Regression: Wry injection executes at document-start, before the root
+// exists. The former eager ResizeObserver.observe(null) aborted the script
+// before it had registered its DOMContentLoaded handler on BOTH platforms.
+{
+  const b = browser(true);
+  const canvas = b.element('canvas', 800, 450);
+  let observedRoot = false;
+  b.window.ResizeObserver = class {
+    observe(root) {
+      assert.ok(root, 'Must never observe a null document root');
+      observedRoot = true;
+    }
+  };
+  b.run();
+  assert.equal(b.html.getAttribute('data-webcask-game'), null,
+    'Do not focus before document readiness');
+  b.domReady();
+  assert.ok(observedRoot, 'Install ResizeObserver once DOM exists');
+  assert.equal(b.html.getAttribute('data-webcask-game'), 'on');
+  assert.equal(canvas.getAttribute('data-webcask-target'), 'true');
 }
 
 // A canvas already mounted when document scripts execute is focused.
