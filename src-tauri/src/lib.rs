@@ -209,9 +209,7 @@ fn set_touch_controls(id: String, enabled: bool, buttons: Vec<webcask_core::Touc
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
-    #[cfg(target_os = "android")]
-    let builder = builder.plugin(tauri_plugin_fs::init());
+    let builder = tauri::Builder::default().plugin(tauri_plugin_fs::init());
     builder.setup(|app| {
             #[cfg(target_os = "android")]
             {
