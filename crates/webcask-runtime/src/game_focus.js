@@ -237,9 +237,6 @@
   }, true);
   window.addEventListener('resize', window.__webcaskRescale);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', window.__webcaskRescale);
-  if (window.ResizeObserver) {
-    new ResizeObserver(window.__webcaskRescale).observe(document.documentElement);
-  }
   function check() {
     // Game engines often mount, replace or resize their canvas AFTER DOM
     // readiness. Continue discovery throughout the session instead of giving
@@ -277,13 +274,32 @@
     }, 150);
   }
   function init() {
+    // Wry injects at document-start. document.documentElement can still be
+    // null then: calling ResizeObserver.observe(null) aborted Game View on
+    // BOTH WebView2 and Android before DOMContentLoaded was registered.
+    if (!document.documentElement || !document.body) {
+      document.addEventListener('DOMContentLoaded', init, { once: true });
+      return;
+    }
     overlay();
     check();
+    // Register observers ONLY after the HTML root actually exists. They are
+    // optional; if blocked, low-cost periodic detection still works.
+    if (window.ResizeObserver) {
+      try {
+        var resizeObserver = new ResizeObserver(window.__webcaskRescale);
+        resizeObserver.observe(document.documentElement);
+        window.__webcaskFocusResizeObserver = resizeObserver;
+      } catch (_) { /* no impact on Game View startup */ }
+    }
     // Keep a low-cost safety poll: games may resize without DOM mutations.
     window.setInterval(check, 900);
     if (window.MutationObserver) {
-      var observer = new MutationObserver(scheduleCheck);
-      observer.observe(document.documentElement, { childList: true, subtree: true });
+      try {
+        var observer = new MutationObserver(scheduleCheck);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+        window.__webcaskFocusMutationObserver = observer;
+      } catch (_) { /* fall back to the interval */ }
     }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once:true });
