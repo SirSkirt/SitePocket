@@ -43,10 +43,22 @@ android_name = f"{{{android_ns}}}name"
 for element in application.findall("activity"):
     if element.get(android_name) == f"{package}.WebCaskActivity":
         raise SystemExit("WebCaskActivity already registered")
-ET.SubElement(application, "activity", {
+# Game WebView must SURVIVE rotation/resizing. The generated primary Tauri
+# Activity has its own configChanges but that is NOT inherited by this new
+# manifest Activity. If omitted Android destroys/recreates WebCaskActivity and
+# Wry's old Rust-owned game WebView cannot restore into that new Activity.
+# Keep the list focused on size/orientation and keyboard configuration changes.
+player_configs = (
+    "orientation|screenSize|smallestScreenSize|screenLayout|"
+    "keyboardHidden|keyboard"
+)
+player = ET.SubElement(application, "activity", {
     android_name: f"{package}.WebCaskActivity",
     f"{{{android_ns}}}exported": "false",
+    f"{{{android_ns}}}configChanges": player_configs,
 })
+if player.get(f"{{{android_ns}}}configChanges") != player_configs:
+    raise SystemExit("WebCaskActivity rotation handling was not registered")
 ET.SubElement(application, "property", {
     android_name: "android.window.PROPERTY_ACTIVITY_EMBEDDING_SPLITS_ENABLED",
     f"{{{android_ns}}}value": "true",
@@ -74,4 +86,15 @@ gradle.write_text(
     + '    implementation("androidx.startup:startup-runtime:1.2.0")\n'
     + '}\n'
 )
-print("Registered WebCask player Activity and native debugger.")
+# Fail the Android workflow if a future generator overwrite silently strips
+# rotation handling and creates a black screen again.
+verify = ET.parse(manifest).getroot().find("application")
+player_entries = [
+    el for el in verify.findall("activity")
+    if el.get(android_name) == f"{package}.WebCaskActivity"
+]
+if len(player_entries) != 1 or player_entries[0].get(
+    f"{{{android_ns}}}configChanges"
+) != player_configs:
+    raise SystemExit("Generated WebCaskActivity is missing orientation/size configChanges")
+print("Registered WebCask player Activity, native debugger, and rotation-safe manifest.")
