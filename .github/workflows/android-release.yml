@@ -27,8 +27,11 @@ jobs:
         shell: bash
         run: |
           test -d "$ANDROID_HOME"
-          command -v sdkmanager
+          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          test -n "$SDK_MANAGER"
+          echo "$(dirname "$SDK_MANAGER")" >> "$GITHUB_PATH"
           echo "Android SDK: $ANDROID_HOME"
+          "$SDK_MANAGER" --version
       - name: Install Android SDK and NDK
         shell: bash
         run: |
