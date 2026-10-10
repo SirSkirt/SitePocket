@@ -283,3 +283,35 @@ The most useful diagnosis boundary for BlockBend is now:
 the native Activity begins, creation/registration is suspect. If Android
 says its renderer is unresponsive, resource-intensive game code or the
 WebView renderer is suspect instead.
+
+## Android diagnostic isolation and pre-navigation native capture
+
+The Android player now opens an empty `about:blank` bootstrap document
+first. The native Activity waits for Wry's actual `RustWebChromeClient`,
+wraps it with the forwarding WebCask console logger, writes an app-private
+`native-console-hook-installed` event, and only then allows Rust to navigate
+to the game. A matching **current-launch** journal event is required (game
+UUID and timestamp); if it is not observed within seven seconds, the game
+navigation is canceled with `native-console-hook-timeout` rather than
+silently missing the earliest console errors. This order still requires an
+on-device test; a passing compile is not proof of Android activity timing.
+
+To isolate the WebCask page scripts from a game's own code: in Android
+**Game Options**, tap **Launch native-only**. This temporary test disables
+WebCask's injected touch overlay, game-focus script and page debugger, but
+keeps the **native Kotlin console logger** and Rust navigation events. The
+normal Launch button restores all usual behaviors; no stored game settings
+or imported assets are changed. Compare reports after equivalent navigation
+in each mode and note the `injection-mode` stage.
+
+Browser-reported `Script error.` entries with no filename, line or stack
+are now labeled `opaque-script-error` with source `unattributed` — neither
+the game nor WebCask is proven responsible. If the WebCask diagnostic script
+catches one of its own failures, its prefixed native-console message becomes
+`native-instrumentation-error`. Report entries are sorted by event time
+rather than ingestion order, because native journal events reach Rust later.
+
+The release CI runs `node .github/scripts/check-webcask-diagnostics.cjs` to
+regression-test source-less error classification and guard behavior.
+Physical-device A/B results are still needed to prove what caused the
+original five anonymous errors.
