@@ -143,8 +143,8 @@ mod tests {
     #[test]
     fn hook_requires_matching_game_time_and_code() {
         let journal = concat!(
-            "{\"appId\":\"first\",\"code\":\"native-console-hook-installed\",\"time\":110}\\n",
-            "{\"appId\":\"second\",\"code\":\"native-console-hook-installed\",\"time\":210}\\n");
+            "{\"appId\":\"first\",\"code\":\"native-console-hook-installed\",\"time\":110}\n",
+            "{\"appId\":\"second\",\"code\":\"native-console-hook-installed\",\"time\":210}\n");
         assert!(hook_confirmed(journal, "second", 200));
         assert!(!hook_confirmed(journal, "first", 200));
         assert!(!hook_confirmed(journal, "third", 0));
