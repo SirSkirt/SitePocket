@@ -20,7 +20,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      # Ubuntu GitHub-hosted runners already include Android SDK command-line tools.
+      # android-actions/setup-android@v3 currently fails when it tries to
+      # install the removed legacy "tools" package.
+      - name: Locate Android SDK
+        shell: bash
+        run: |
+          test -d "$ANDROID_HOME"
+          command -v sdkmanager
+          echo "Android SDK: $ANDROID_HOME"
       - name: Install Android SDK and NDK
         shell: bash
         run: |
