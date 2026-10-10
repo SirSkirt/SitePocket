@@ -79,4 +79,24 @@ assert.match(nativeRustBridge,
 assert.match(nativeKotlinBridge, /var appId: String/,
   'Kotlin ActiveGameArgs must accept the camelCase appId field');
 
+// Rotation must NOT recreate a live game WebView. The Android build script
+// declares handling for orientation and size changes on the secondary
+// WebCaskActivity (MainActivity settings do not carry over).
+const androidSetup = fs.readFileSync('.github/scripts/setup-webcask-android.py', 'utf8');
+const nativeActivity = fs.readFileSync('src-tauri/android/WebCaskActivity.kt', 'utf8');
+const managerUI = fs.readFileSync('src/main.ts', 'utf8');
+assert.match(androidSetup, /player_configs\s*=\s*\(/,
+  'Android generated WebCaskActivity needs explicit configChanges');
+for (const flag of ['orientation', 'screenSize', 'smallestScreenSize', 'screenLayout']) {
+  assert.ok(androidSetup.includes(flag), 'Activity must handle configuration: ' + flag);
+}
+assert.match(nativeActivity, /override fun onConfigurationChanged\(newConfig: Configuration\)/,
+  'Activity must respond to configuration changes without restarting the WebView');
+assert.match(nativeActivity, /playerWebView\?\.invalidate\(\)/,
+  'Activity must redraw its WebView after rotation');
+assert.match(nativeActivity, /"native-tauri-injection-conflict"/,
+  'Tauri bootstrap errors must not be labeled as game failures');
+assert.match(managerUI, /event\.code === 'native-tauri-injection-conflict'/,
+  'SitePocket must explain known Tauri-only bootstrap errors');
+
 console.log('WebCask diagnostics isolation tests passed.');
