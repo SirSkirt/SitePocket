@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:window="http://schemas.android.com/apk/res-auto">
+    <!-- On phones the new Activity uses the Back stack; on large screens
+         Activity Embedding permits side-by-side WebCask game activity. -->
+    <SplitPairRule
+        window:splitRatio="0.33"
+        window:splitLayoutDirection="locale"
+        window:splitMinWidthDp="840"
+        window:splitMaxAspectRatioInPortrait="alwaysAllow"
+        window:finishPrimaryWithSecondary="never"
+        window:finishSecondaryWithPrimary="never"
+        window:clearTop="false">
+        <SplitPairFilter
+            window:primaryActivityName=".MainActivity"
+            window:secondaryActivityName=".WebCaskActivity" />
+    </SplitPairRule>
+</resources>

@@ -99,6 +99,147 @@ jobs:
           ''', encoding='utf-8')
           print('Configured local-only HTTP for offline HTML5 games')
           PY
+      - name: Configure WebCask player Activity for Android multi-window
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import xml.etree.ElementTree as ET
+
+          src = Path('src-tauri/android')
+          app_root = Path('src-tauri/gen/android/app')
+          main = app_root / 'src/main'
+          candidates = list((main / 'java').rglob('MainActivity.kt'))
+          if len(candidates) != 1:
+              raise SystemExit(f'Expected one generated MainActivity.kt, found {len(candidates)}')
+          activity = candidates[0]
+          match = re.search(r'(?m)^\s*package\s+([\w.]+)\s*
+        shell: bash
+        run: |
+          keytool -list -keystore src-tauri/sitepocket-preview.keystore -storepass sitepocketpreview -alias sitepocket-preview >/dev/null
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          gradle = Path('src-tauri/gen/android/app/build.gradle.kts')
+          if not gradle.is_file():
+              raise SystemExit('Generated Android Gradle project is missing')
+          code = 10000 + int(os.environ['GITHUB_RUN_NUMBER'])
+          gradle.write_text(gradle.read_text() + '''
+          // SitePocket debug PREVIEW ONLY. Never ship this key on Play Store.
+          android {
+              signingConfigs {
+                  create("sitepocketPreview") {
+                      storeFile = file("../../../sitepocket-preview.keystore")
+                      storePassword = "sitepocketpreview"
+                      keyAlias = "sitepocket-preview"
+                      keyPassword = "sitepocketpreview"
+                  }
+              }
+              buildTypes {
+                  getByName("debug") {
+                      signingConfig = signingConfigs.getByName("sitepocketPreview")
+                  }
+              }
+              defaultConfig {
+                  versionCode = ''' + str(code) + '''
+                  versionName = "0.1.0-preview.''' + os.environ['GITHUB_RUN_NUMBER'] + '''"
+              }
+          }
+          ''')
+          print('Applied fixed dev-preview signing identity and version code', code)
+          PY
+      - name: Build installable debug-signed APK
+        run: npx tauri android build --apk --debug --target aarch64
+      - name: Verify Android package version and signing
+        shell: bash
+        run: |
+          APK="$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -type f -print -quit)"
+          test -n "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep '^package:'
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" | grep 'Signer #1 certificate SHA-256 digest'
+      - name: Verify APK output
+        shell: bash
+        run: |
+          find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' -print
+          test -n "$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' -print -quit)"
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SitePocket-Android-arm64-preview
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+      - name: Publish Android preview prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-android-preview.${{ github.run_number }}
+          name: SitePocket Android Preview ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          body: |
+            Early Android arm64 preview, Android 12L/API32+.
+            Continuously updatable dev-preview APK (fixed debug signing key + increasing versionCode); NOT for production or Play Store.
+            Online websites and offline ZIP-imported HTML5 games in Android WebView.
+            Per-game drag-to-position multi-touch keyboard layouts.
+            Android Files content URI imported through native ContentResolver (no broad storage permission). Folder picker, automatic online-game capture and native shortcuts not supported.
+            KeyboardEvents are synthetic and some games may ignore them.
+, activity.read_text())
+          if not match:
+              raise SystemExit('Could not detect generated Android Kotlin package')
+          package = match.group(1)
+          print('SitePocket Android Activity package:', package)
+
+          for name in ('WebCaskActivity.kt', 'WebCaskSplitInitializer.kt'):
+              target = activity.parent / name
+              target.write_text((src / name).read_text().replace('__PACKAGE__', package))
+              print('Added', target)
+          dest = main / 'res/xml/webcask_split_config.xml'
+          dest.parent.mkdir(parents=True, exist_ok=True)
+          dest.write_bytes((src / 'webcask_split_config.xml').read_bytes())
+
+          a = 'http://schemas.android.com/apk/res/android'
+          t = 'http://schemas.android.com/tools'
+          ET.register_namespace('android', a)
+          ET.register_namespace('tools', t)
+          manifest = main / 'AndroidManifest.xml'
+          tree = ET.parse(manifest)
+          root = tree.getroot()
+          application = root.find('application')
+          if application is None:
+              raise SystemExit('Could not find Android application element')
+          ET.SubElement(application, 'activity', {
+              f'{{{a}}}name': f'{package}.WebCaskActivity',
+              f'{{{a}}}exported': 'false'
+          })
+          ET.SubElement(application, 'property', {
+              f'{{{a}}}name': 'android.window.PROPERTY_ACTIVITY_EMBEDDING_SPLITS_ENABLED',
+              f'{{{a}}}value': 'true'
+          })
+          provider = ET.SubElement(application, 'provider', {
+              f'{{{a}}}name': 'androidx.startup.InitializationProvider',
+              f'{{{a}}}authorities': package + '.androidx-startup',
+              f'{{{a}}}exported': 'false',
+              f'{{{t}}}node': 'merge'
+          })
+          ET.SubElement(provider, 'meta-data', {
+              f'{{{a}}}name': f'{package}.WebCaskSplitInitializer',
+              f'{{{a}}}value': 'androidx.startup'
+          })
+          tree.write(manifest, encoding='utf-8', xml_declaration=True)
+
+          gradle = app_root / 'build.gradle.kts'
+          if not gradle.is_file():
+              raise SystemExit('Android app build.gradle.kts missing')
+          gradle.write_text(gradle.read_text() + '''
+          // Tauri Android WebCask secondary Activity / activity embedding.
+          dependencies {
+              implementation("androidx.window:window:1.5.0")
+              implementation("androidx.startup:startup-runtime:1.2.0")
+          }
+          ''')
+          print('Registered WebCaskActivity and multi-window dependencies')
+          PY
       - name: Apply persistent preview signing certificate
         shell: bash
         run: |

@@ -37,6 +37,9 @@ pub fn launch(app: AppHandle, id: String) -> Result<(), String> {
     crate::diagnostics::begin(&item.id);
     let launch_id = item.id.clone();
     let mut builder = WebviewWindowBuilder::new(&main, label, WebviewUrl::External(url))
+        // Android needs a registered TauriActivity subclass for every extra
+        // window. Without it, activity launch may stall before WebView exists.
+        .activity_name("WebCaskActivity")
         .title(&item.name)
         .on_page_load(move |_window, payload| {
             let phase = match payload.event() {
@@ -61,6 +64,9 @@ pub fn launch(app: AppHandle, id: String) -> Result<(), String> {
     if item.game_focus {
         builder = builder.initialization_script(include_str!("../../crates/webcask-runtime/src/game_focus.js"));
     }
+    crate::diagnostics::record(&item.id, "info", "runtime",
+        "android-activity-build-requested", "Requesting WebCask player Activity",
+        "Creating the registered WebCaskActivity. A timeout after this stage points to Android Activity / window startup.");
     builder.build().map_err(|e| {
         crate::diagnostics::record(&item.id, "error", "runtime", "webview-create-failed",
             "Android could not create the game WebView", &e.to_string());

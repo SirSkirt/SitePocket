@@ -223,3 +223,29 @@ Important limitations: page-origin JavaScript cannot observe errors from
 cross-origin frames, blocked scripts, hard Android WebView process crashes,
 or native Kotlin stack traces. The exact root cause still needs testing on
 a device; the error classification is guidance, not a verdict.
+
+## Android player launch fix (after debugger report)
+
+A real Android BlockBend report showed:
+- Local game server listening on 127.0.0.1:41000.
+- Android game launch began.
+- No `webview-created` or navigation events arrived before the 22-second timeout.
+
+This points to Android window/Activity creation, rather than a confirmed
+game JavaScript failure. WebCask now registers a dedicated
+`WebCaskActivity` for its second Android WebView window, configures the
+AndroidX Window/Startup Activity Embedding support, and calls
+`WebviewWindowBuilder::activity_name("WebCaskActivity")`. It also launches
+the player from an async Tauri command on a blocking-worker thread so the
+manager's IPC/GUI can remain responsive if Android waits for its Activity
+creation. A new `android-activity-build-requested` diagnostic marks the
+exact boundary before `builder.build()`.
+
+This is a targeted fix based on the diagnostic evidence, not proof the freeze
+is solved. On-device validation still needs to confirm that an Android
+Activity and WebView are created and that BlockBend loads its first page.
+The imported ZIP, saved games, controls, and desktop WebCask code are not
+changed by this fix.
+
+For Tauri Android multi-window requirements see
+https://v2.tauri.app/learn/mobile-multiwindow/.

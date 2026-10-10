@@ -118,12 +118,18 @@ fn runtime_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Err("WebCask Runtime not found. Install the Windows release or compile the runtime alongside SitePocket.".into())
 }
 #[tauri::command]
-fn launch_app(app: tauri::AppHandle, id: String) -> Result<(), String> {
+async fn launch_app(app: tauri::AppHandle, id: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        let result = android_player::launch(app, id.clone());
+        // WebViewWindowBuilder::build can synchronously wait for the Android
+        // Activity/event-loop. Do not block Tauri's synchronous IPC handler.
+        // Rust window creation in async command is Tauri's recommended path.
+        let trace_id = id.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            android_player::launch(app, id)
+        }).await.map_err(|e| format!("Android player launch task failed: {e}"))?;
         if let Err(ref message) = result {
-            diagnostics::record(&id, "error", "runtime", "launch-failed",
+            diagnostics::record(&trace_id, "error", "runtime", "launch-failed",
                 "WebCask failed to launch the game", message);
         }
         return result;
