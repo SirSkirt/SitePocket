@@ -14,8 +14,9 @@
   var originalOutline = null;
   var badge = null;
   var label = null;
-  var attempts = 0;
   var lastViewport = '';
+  var lastScan = 0;
+  var scanQueued = false;
   var scheduled = false;
   function scheduleResize() {
     if (scheduled) return;
@@ -39,8 +40,20 @@
     if (el.closest('[data-webcask-overlay]')) return false;
     var r = el.getBoundingClientRect();
     var style = window.getComputedStyle(el);
-    return r.width >= 240 && r.height >= 150 &&
+    // Small Android viewports / split-screen games can be below 240x150.
+    return r.width >= 120 && r.height >= 80 &&
       style.display !== 'none' && style.visibility !== 'hidden';
+  }
+  function gameRoot(el) {
+    // Keep HUD/menu elements that share a game container with the canvas.
+    // Never select document.body: that would make Game View a no-op.
+    var ancestor = el.parentElement;
+    for (var depth = 0; ancestor && depth < 5; depth++, ancestor = ancestor.parentElement) {
+      if (ancestor === document.body || ancestor === document.documentElement) break;
+      if (ancestor.matches('[data-game-root], #game, #game-root, #game-container, #game-wrapper, #game-stage, .game-root, .game-container, .game-wrapper, .game-stage, .game-viewport') &&
+          eligible(ancestor)) return ancestor;
+    }
+    return el;
   }
   function largestGame() {
     var candidates = document.querySelectorAll('canvas, iframe, embed, object');
@@ -52,6 +65,17 @@
       var r = el.getBoundingClientRect();
       var score = r.width * r.height;
       if (score > biggest) { best = el; biggest = score; }
+    }
+    if (best) return gameRoot(best);
+    // DOM-only games may draw inside a named game root rather than a canvas.
+    var roots = document.querySelectorAll(
+      '[data-game-root], #game-root, #game-container, #game-wrapper, #game-stage, .game-root, .game-container, .game-wrapper, .game-stage, .game-viewport');
+    for (var j = 0; j < roots.length; j++) {
+      var root = roots[j];
+      if (!eligible(root)) continue;
+      var size = root.getBoundingClientRect();
+      var area = size.width * size.height;
+      if (area > biggest) { best = root; biggest = area; }
     }
     return best;
   }
@@ -130,14 +154,14 @@
     if (!document.body || badge) return;
     badge = document.createElement('div');
     badge.setAttribute('data-webcask-overlay', 'true');
-    badge.style.cssText = 'position:fixed!important;top:10px!important;right:10px!important;' +
+    badge.style.cssText = 'position:fixed!important;top:10px!important;left:10px!important;' +
       'z-index:2147483646!important;padding:7px 9px!important;border-radius:8px!important;' +
       'background:rgba(11,19,26,.86)!important;color:white!important;' +
       'font:12px/1.4 Segoe UI,Arial,sans-serif!important;' +
       'display:flex!important;gap:8px!important;align-items:center!important;' +
-      'opacity:.28!important;transition:opacity .2s!important;';
+      'opacity:.82!important;transition:opacity .2s!important;';
     badge.addEventListener('mouseenter', function () { badge.style.opacity = '1'; });
-    badge.addEventListener('mouseleave', function () { badge.style.opacity = '.28'; });
+    badge.addEventListener('mouseleave', function () { badge.style.opacity = '.82'; });
     label = document.createElement('span');
     label.textContent = 'Searching for game…';
     badge.appendChild(label);
@@ -216,33 +240,51 @@
   if (window.ResizeObserver) {
     new ResizeObserver(window.__webcaskRescale).observe(document.documentElement);
   }
-  window.setInterval(function () {
-    if (!enabled || !current) return;
-    if (!document.contains(current)) {
+  function check() {
+    // Game engines often mount, replace or resize their canvas AFTER DOM
+    // readiness. Continue discovery throughout the session instead of giving
+    // up after thirty scans or holding onto a detached rendering surface.
+    if (badge && !document.contains(badge)) { badge = null; label = null; }
+    overlay();
+    if (current && !document.contains(current)) {
       current = null;
-      check();
+      originalStyle = null;
+      document.documentElement.removeAttribute('data-webcask-game');
+      updateBadge('Game view: rendering surface changed; searching…');
+    }
+    if (current) {
+      if (enabled) {
+        styles();
+        var viewport = window.innerWidth + 'x' + window.innerHeight;
+        if (viewport !== lastViewport) {
+          lastViewport = viewport;
+          window.__webcaskRescale();
+        }
+      }
       return;
     }
-    var viewport = window.innerWidth + 'x' + window.innerHeight;
-    if (viewport !== lastViewport) {
-      lastViewport = viewport;
-      window.__webcaskRescale();
-    }
-  }, 150);
-  function check() {
-    if (current || picker) return;
-    attempts++;
+    if (picker || !enabled) return;
     var game = largestGame();
     if (game) focus(game);
-    else if (attempts >= 30) updateBadge('No game detected — use Pick');
+    else updateBadge('Waiting for game canvas · Pick');
+  }
+  function scheduleCheck() {
+    if (scanQueued || current || !enabled) return;
+    scanQueued = true;
+    window.setTimeout(function () {
+      scanQueued = false;
+      check();
+    }, 150);
   }
   function init() {
     overlay();
     check();
-    var timer = window.setInterval(function () {
-      if (current || attempts >= 30) { window.clearInterval(timer); return; }
-      check();
-    }, 1100);
+    // Keep a low-cost safety poll: games may resize without DOM mutations.
+    window.setInterval(check, 900);
+    if (window.MutationObserver) {
+      var observer = new MutationObserver(scheduleCheck);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once:true });
   else init();
