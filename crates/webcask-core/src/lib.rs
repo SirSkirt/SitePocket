@@ -1,6 +1,6 @@
 //! Application registry and game importer; no Tauri or browser privileges.
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{fs, io, path::{Path, PathBuf}, sync::OnceLock};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +15,66 @@ pub enum WindowMode {
     Windowed,
     Maximized,
     Fullscreen,
+}
+/// Each game may have its own screen buttons; mappings are intentionally
+/// saved in the shared registry so Android and future platforms can use them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TouchButton {
+    pub id: String,
+    pub label: String,
+    pub key: String,
+    pub x: f32,
+    pub y: f32,
+    pub size: u8,
+}
+
+pub fn default_touch_buttons() -> Vec<TouchButton> {
+    [
+        ("up", "▲", "ArrowUp", 18.0, 63.0),
+        ("left", "◀", "ArrowLeft", 8.0, 75.0),
+        ("down", "▼", "ArrowDown", 18.0, 85.0),
+        ("right", "▶", "ArrowRight", 28.0, 75.0),
+        ("a", "A", "KeyZ", 86.0, 75.0),
+        ("b", "B", "KeyX", 73.0, 85.0),
+        ("start", "START", "Enter", 50.0, 91.0),
+    ].into_iter().map(|(id, label, key, x, y)| TouchButton {
+        id: id.into(), label: label.into(), key: key.into(), x, y, size: 56,
+    }).collect()
+}
+fn default_touch_enabled() -> bool { true }
+pub fn validate_touch_buttons(buttons: &[TouchButton]) -> Result<(), String> {
+    if buttons.len() > 24 { return Err("A game supports at most 24 touch controls.".into()); }
+    let mut ids = std::collections::HashSet::new();
+    for button in buttons {
+        if button.id.is_empty() || button.id.len() > 32 ||
+           !button.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') ||
+           !ids.insert(button.id.as_str()) {
+            return Err("Each touch button needs a unique alphanumeric ID.".into());
+        }
+        if button.label.trim().is_empty() || button.label.chars().count() > 16 ||
+           button.label.chars().any(|c| c.is_control()) {
+            return Err("Touch button labels must be 1–16 visible characters.".into());
+        }
+        if !valid_key(&button.key) {
+            return Err(format!("Unsupported keyboard mapping: {}.", button.key));
+        }
+        if !button.x.is_finite() || !button.y.is_finite() ||
+           !(4.0..=96.0).contains(&button.x) || !(4.0..=96.0).contains(&button.y) ||
+           !(32..=96).contains(&button.size) {
+            return Err("Touch position must be 4–96%, with buttons 32–96 px wide.".into());
+        }
+    }
+    Ok(())
+}
+fn valid_key(key: &str) -> bool {
+    matches!(key, "ArrowUp"|"ArrowDown"|"ArrowLeft"|"ArrowRight"|
+        "Space"|"Enter"|"Escape"|"Tab"|"ShiftLeft"|"ControlLeft"|
+        "AltLeft"|"Backspace") ||
+        (key.len() == 4 && key.starts_with("Key") &&
+         key.as_bytes()[3].is_ascii_uppercase()) ||
+        (key.len() == 6 && key.starts_with("Digit") &&
+         key.as_bytes()[5].is_ascii_digit())
 }
 fn default_window_width() -> u32 { 1150 }
 fn default_window_height() -> u32 { 760 }
@@ -38,9 +98,26 @@ pub struct InstalledApp {
     pub window_width: u32,
     #[serde(default = "default_window_height")]
     pub window_height: u32,
+    #[serde(default = "default_touch_enabled")]
+    pub touch_enabled: bool,
+    #[serde(default = "default_touch_buttons")]
+    pub touch_buttons: Vec<TouchButton>,
+}
+static DATA_ROOT: OnceLock<PathBuf> = OnceLock::new();
+/// Mobile data paths must come from the Tauri platform API; dirs returns
+/// no reliable Android app-data path. Initialize once in the app setup hook.
+pub fn configure_root(path: PathBuf) -> Result<(), String> {
+    if let Some(previous) = DATA_ROOT.get() {
+        if previous == &path { return Ok(()); }
+        return Err("App-data path is already configured".into());
+    }
+    DATA_ROOT.set(path).map_err(|_| "Could not configure app-data path".to_string())
 }
 pub fn root() -> Result<PathBuf, String> {
-    let path = dirs::data_local_dir().ok_or("Local application data directory unavailable")?.join("SitePocket");
+    let path = match DATA_ROOT.get() {
+        Some(path) => path.clone(),
+        None => dirs::data_local_dir().ok_or("Local application data directory unavailable")?.join("SitePocket"),
+    };
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(path)
 }
@@ -77,7 +154,8 @@ pub fn install_website(name: &str, address: &str) -> Result<InstalledApp, String
     }
     let app = InstalledApp { id: Uuid::new_v4().to_string(), name, kind: AppKind::Online,
         url: Some(parsed.to_string()), port: None, game_focus: false, entry_path: None, window_mode: WindowMode::default(),
-        window_width: default_window_width(), window_height: default_window_height() };
+        window_width: default_window_width(), window_height: default_window_height(),
+        touch_enabled: true, touch_buttons: default_touch_buttons() };
     let mut apps = list_apps()?;
     apps.push(app.clone());
     save_apps(&apps)?;
@@ -117,6 +195,7 @@ pub fn import_game(name: &str, source: &Path) -> Result<InstalledApp, String> {
             game_focus: false, entry_path: Some(entry_path),
             window_mode: WindowMode::default(),
             window_width: default_window_width(), window_height: default_window_height(),
+            touch_enabled: true, touch_buttons: default_touch_buttons(),
         };
         if copied == 0 { return Err("The selected game folder or ZIP is empty.".into()); }
         apps.push(app.clone());
@@ -224,6 +303,19 @@ fn import_files(source: &Path, target: &Path) -> Result<usize, String> {
     Ok(file_count)
 }
 
+/// Persist a per-game mapping; does not touch game save data or files.
+pub fn set_touch_controls(id: &str, enabled: bool, buttons: Vec<TouchButton>)
+    -> Result<InstalledApp, String> {
+    Uuid::parse_str(id).map_err(|_| "Invalid application ID".to_string())?;
+    validate_touch_buttons(&buttons)?;
+    let mut apps = list_apps()?;
+    let item = apps.iter_mut().find(|app| app.id == id).ok_or("Application not found")?;
+    item.touch_enabled = enabled;
+    item.touch_buttons = buttons;
+    let result = item.clone();
+    save_apps(&apps)?;
+    Ok(result)
+}
 /// Validate launch settings here, not just in the UI. The game window is resizable
 /// after launch; these dimensions describe its initial windowed size.
 pub fn validate_game_options(width: u32, height: u32) -> Result<(), String> {
@@ -279,6 +371,18 @@ pub fn get_app(id: &str) -> Result<InstalledApp, String> {
 mod tests {
     use super::*;
     #[test]
+    fn touch_layout_validation() {
+        let mut buttons = default_touch_buttons();
+        assert!(validate_touch_buttons(&buttons).is_ok());
+        buttons[0].key = "KeyP".into();
+        assert!(validate_touch_buttons(&buttons).is_ok());
+        buttons[0].key = "system.shell".into();
+        assert!(validate_touch_buttons(&buttons).is_err());
+        buttons[0].key = "KeyP".into();
+        buttons[0].x = f32::NAN;
+        assert!(validate_touch_buttons(&buttons).is_err());
+    }
+    #[test]
     fn rejects_invalid_window_dimensions() {
         assert!(validate_game_options(480, 320).is_ok());
         assert!(validate_game_options(3840, 2160).is_ok());
@@ -288,7 +392,7 @@ mod tests {
     #[test]
     fn modes_roundtrip() {
         let app = InstalledApp { id: Uuid::new_v4().to_string(), name: "Test".into(), kind: AppKind::Local, url: None, port: Some(42000), game_focus: true, entry_path: Some("Build/index.html".into()),
-            window_mode: WindowMode::Fullscreen, window_width: 1280, window_height: 720 };
+            window_mode: WindowMode::Fullscreen, window_width: 1280, window_height: 720, touch_enabled: true, touch_buttons: default_touch_buttons(), };
         let value = serde_json::to_string(&app).unwrap();
         let back: InstalledApp = serde_json::from_str(&value).unwrap();
         assert!(matches!(back.kind, AppKind::Local));
@@ -296,6 +400,7 @@ mod tests {
         assert_eq!(back.entry_path.as_deref(), Some("Build/index.html"));
         assert_eq!(back.window_mode, WindowMode::Fullscreen);
         assert_eq!(back.window_width, 1280);
+        assert_eq!(back.touch_buttons.len(), 7);
         assert_eq!(back.window_height, 720);
     }
 
@@ -363,6 +468,7 @@ mod tests {
         assert!(parsed.entry_path.is_none());
         assert_eq!(parsed.window_mode, WindowMode::Windowed);
         assert_eq!(parsed.window_width, 1150);
+        assert_eq!(parsed.touch_buttons.len(), 7);
         assert_eq!(parsed.window_height, 760);
     }
 }

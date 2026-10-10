@@ -109,3 +109,34 @@ AppUserModelIDs, richer profiles, native permission UI.
 ## License
 
 MIT. See LICENSE.
+
+
+## Android preview — WebCask Touch
+
+SitePocket now has an Android preview targeting Android 12L (API 32) or newer.
+Android uses system WebView through a separate Tauri player window. The game
+webview receives no SitePocket native commands.
+
+From **Game Options**, open **Edit Touch Layout**. Drag buttons to position them,
+choose labels, keyboard mappings and sizes, add and delete buttons (up to 24),
+and toggle them per game. Controls support multi-touch holding and release.
+The configuration persists across launches in the Rust registry.
+
+**Compatibility:** Buttons emit synthetic browser KeyboardEvents. Games that
+require trusted hardware keys or run in cross-origin embedded frames may ignore
+them. Full native keyboard emulation is not yet implemented.
+
+**Initial Android limitations:** Online websites only. Offline ZIP/folder
+import, browser-game capture and Windows-style desktop shortcuts are not yet
+supported on Android. Tauri Android WebView depends on the device's installed
+system WebView provider. Builds are debug-signed for sideload testing, not
+production or Google Play signing.
+
+Build on Linux with JDK17, Android SDK/NDK, Rust Android target, Node22:
+
+    npm install
+    npx tauri icon src-tauri/icons/icon.png
+    npx tauri android init --ci
+    npx tauri android build --apk --debug --target aarch64
+
+Windows and Android pipelines publish independent alpha/preview artifacts.
