@@ -387,6 +387,15 @@ setting is applied on the next normal game launch. On Android,
 **Launch native-only deliberately disables Game View**, the touch layer and
 the injected page debugger; use normal **Launch** to test Game View.
 
+The legacy script also installed `ResizeObserver` at document-start,
+before checking whether `document.documentElement` existed. On Wry
+WebView2/Android this can throw and abort initialization entirely, preventing
+even the DOM-ready callback from being registered. The observer is now
+installed inside `init()`, after the root/body exist, guarded so optional
+APIs never block Game View startup. The shared Node tests simulate an
+initially missing HTML root with ResizeObserver available and prove that
+focusing resumes after DOMContentLoaded.
+
 The legacy detector only accepted canvases/iframes at least 240x150 CSS
 pixels and stopped checking after 30 tries. If a modern engine builds a
 canvas asynchronously, replaces it, or runs in a smaller Android viewport,
