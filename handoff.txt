@@ -1,10 +1,12 @@
 SITEPOCKET + WEBCASK RUNTIME — PROJECT HANDOFF
 ===========================================
-Updated: 2026-10-10
+Updated: 2026-10-10 (native console ordering and instrumentation isolation)
 Repository: https://github.com/SirSkirt/SitePocket
 Branch: main
-Current source baseline: a03273e249c6228f8b83746d9583f1ed7e3bc09d
-Status: Windows and Android CI builds successful; Android BlockBend launch freeze NOT YET RESOLVED.
+Last implementation commit before this handoff update: 98f99a1183cd168433956c2da513f83510eb511a
+Status: BlockBend now launches on the user's S25 Ultra; anonymous script errors persist.
+Native-preload console ordering + A/B isolation changes pushed. CI/build/release for
+these latest changes NOT YET CONFIRMED; no on-device test of them yet.
 
 READ THIS FIRST (FOR THE NEXT CHAT / DEVELOPER)
 ------------------------------------------------
@@ -20,6 +22,77 @@ modular; preserve existing Windows behavior while adding Android features.
 Push changes, let CI compile, fix errors, verify actual GitHub Release assets,
 and distinguish "CI passed" from "tested successfully on a physical device".
 When work continues, UPDATE THIS HANDOFF after material changes.
+
+LATEST SESSION: 2026-10-10 17:50 UTC REPORT / PROPOSED FIX
+----------------------------------------------------------
+User confirmed BlockBend NOW LAUNCHES on S25 Ultra using Android preview
+(the previous native Activity creation freeze was resolved). The new report
+showed three game navigations/reloads and a group of five anonymous
+[ERROR] GAME/script-error "Script error." records each time, with EMPTY
+filename/line/column/stack fields. Most important observation:
+native-console-hook-installed was recorded AFTER the first game's
+navigation had already finished. Prior Kotlin code delayed the chrome
+client hook by 100ms and relied on a 1750ms polling guard. Also, the report
+previously grouped native journal events after Rust events, NOT by time.
+Neither source was reliably established. The code must not call these
+BlockBend defects without independent evidence.
+
+IMPLEMENTED AND PUSHED SINCE PREVIEW.12, BUT NOT YET DEVICE-VALIDATED:
+- src-tauri/android/WebCaskActivity.kt:
+  schedule UI-thread ChromeClient polling immediately after WebView creation
+  (16ms while waiting, 750ms once hooked); only acknowledge Wry's real
+  RustWebChromeClient, not a placeholder that will be overwritten. Preserve
+  forwarding of Wry's ChromeClient functions. Log own [WebCask diagnostics...]
+  console failures as native-instrumentation-error instead of GAME.
+- src-tauri/src/android_player.rs:
+  WebView starts at about:blank, not the game's URL. Verify a fresh
+  native-console-hook-installed journal event matching game ID and launch
+  timestamp via the native plugin, then navigate to game with
+  WebviewWindow::navigate(). Fail with native-console-hook-timeout after 7s
+  if hook cannot be confirmed, rather than letting uncaptured errors through.
+  The initial about:blank page must not mark game readiness. Added Rust
+  journal-matching unit test. NOTE: this bootstrap navigation is a new
+  behavior and must be validated with physical Android WebView!
+- Added Android 'Launch native-only' in Game Options to run WITHOUT WebCask
+  initialization scripts: no touch overlay, no page error listener, no Game
+  Focus. Native Kotlin console + Rust diagnostics stay enabled. Normal Launch
+  remains unchanged; game registration and options persist. Backend launch
+  command accepts nativeOnly and leaves Windows behavior unchanged.
+- android_debug.js catches its own setup/reporting exceptions with a clearly
+  prefixed console warning. Opaque 'Script error.' with no filename/stack
+  becomes opaque-script-error, source unattributed (still visible as an
+  error, but no game-fault label/overlay); known errors remain game events.
+  mobile_server.rs accepts/records this new event.
+- src/main.ts sorts combined native and Rust diagnostics chronologically;
+  adds explicit diagnoses for unattributed and WebCask instrumentation errors.
+- Node regression test in .github/scripts/check-webcask-diagnostics.cjs
+  validates initialization is quiet, opaque errors are distinct, and logger
+  send failures are tagged. Both release workflows run it.
+- README updated. All changes were committed to main via GitHub connector.
+  As of writing the connector DOES NOT expose push-workflow run listing or
+  release asset lookup; latest CI success/APK/NSIS cannot be honestly claimed.
+
+IMMEDIATE NEXT STEPS:
+1) Verify current CI Android/Windows workflow status and GitHub Release
+   APK + NSIS assets in GitHub Actions (the scripts were changed on main).
+   If CI fails, inspect logs and repair. Latest KNOWN success remains
+   Preview.12 / Alpha.23 from the earlier handoff, not these new commits.
+2) Install the newest successful Android Preview over the current signer.
+   Clear old report, launch BlockBend normally and copy the fresh report.
+   Expect native-console-hook-installed preceding
+   native-console-before-game AND webview-navigation-started, with no
+   native-console-hook-timeout.
+3) If anonymous script errors remain, close game, clear report and use
+   Game Options > Launch native-only. Compare like-for-like launches:
+   - present both modes: game/asset/WebView or shared platform code possible
+   - normal only: WebCask injected touch/focus/page instrumentation suspect
+   - own native-instrumentation-error: definite logger code defect
+   - absent both: historical transient conditions or timing
+   An opaque error is NEVER itself proof of which component failed.
+4) Keep WebCask's native diagnostics robust but do not modify BlockBend
+   game code, change signing identity, or erase imported game data.
+5) Update this handoff with actual CI links, releases, test reports, and
+   concrete findings after the next validation.
 
 LATEST VERIFIED RELEASES (as of this handoff)
 ----------------------------------------------
