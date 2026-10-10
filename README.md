@@ -23,6 +23,15 @@ manager.
 - Persist separate user-data/browser profiles for installed apps.
 - Serve local games via a read-only 127.0.0.1 HTTP server with WASM MIME,
   path traversal restrictions and cross-origin isolation headers.
+- **Per-app icons:** SitePocket checks online sites for manifest icons, favicons,
+  and Apple touch icons on install, and scans imported game folders for their
+  bundled icons. A missing favicon never blocks installation.
+- **Customize icons:** Open Game Options → Choose Image to use your own PNG,
+  JPG, WebP, GIF, BMP, or ICO; Get Website Icon / Get Game Icon restores the
+  discovered icon. Icons are stored locally as PNG (library preview) and a
+  multi-size Windows ICO (16/32/48/256) for shortcuts, title bars, and taskbar.
+  Existing desktop shortcuts are updated where possible; Windows icon cache
+  or a pinned taskbar shortcut may require relaunching or re-pinning.
 - Create Desktop shortcuts; uninstall apps and remove their local profiles.
 - **Game Options** on every installed app: save a per-app **Launch in Game View**
   preference, and choose **Windowed**, **Maximized**, or **Fullscreen** at startup.
@@ -50,6 +59,11 @@ games: only HTTP(S) resources from the same origin are fetched; CDNs, server
 authentication, cookie-dependent requests, streaming multiplayer, and dynamic
 asset URL generation can prevent offline play. Captures use a separate browser
 profile for the downloaded game, so existing online saves may not carry over.
+Automatic icon lookup is best effort. For safety it fetches only same-origin
+public HTTP(S) resources, without redirects, proxy access, authentication,
+or private-network requests; some websites use icons hosted on other domains,
+and those apps may need a custom icon. The Tauri runtime never grants websites
+native filesystem or icon-management privileges.
 No bypass of DRM, paid access, login protection or usage permissions is attempted.
 The report in each downloaded game's directory records missing resources and
 marks offline status "unverified"; **test by disconnecting your network**.

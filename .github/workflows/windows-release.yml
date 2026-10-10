@@ -25,6 +25,8 @@ jobs:
         run: cargo test -p webcask-core
       - name: Test capture path and runtime
         run: cargo test -p webcask-runtime
+      - name: Test per-app icon handling
+        run: cargo test -p sitepocket
       - name: Build independent runtime
         run: cargo build --release -p webcask-runtime
       - name: Stage WebCask Runtime for installer
@@ -54,5 +56,6 @@ jobs:
             Experimental Windows x64 build.
             Standalone WebCask app launching, local HTML5/WASM game folder/ZIP
             imports, persistent browser profiles and Desktop shortcuts.
-            New: Game Focus resize fixes and experimental same-origin game capture.
+            New: website and local-game icon discovery, image customization,
+            per-app taskbar/window icons and individual Windows shortcut icons.
             Downloads are unverified offline candidates, not guaranteed offline games.

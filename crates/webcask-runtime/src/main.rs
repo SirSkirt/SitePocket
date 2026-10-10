@@ -28,6 +28,7 @@ struct WebCask {
     window_mode: WindowMode,
     window_width: u32,
     window_height: u32,
+    icon_path: PathBuf,
     capture: Option<CaptureSession>,
 }
 
@@ -61,6 +62,11 @@ impl ApplicationHandler<CaptureEvent> for WebCask {
                 Some(Fullscreen::Borderless(None))
             ),
         };
+        // Each app has its own actual Windows window/taskbar icon. The
+        // shortcut uses its matching multi-size ICO file.
+        if let Some(icon) = load_window_icon(&self.icon_path) {
+            attrs = attrs.with_window_icon(Some(icon));
+        }
         let window = match events.create_window(attrs) {
             Ok(w) => w, Err(e) => { eprintln!("Window: {e}"); events.exit(); return; }
         };
@@ -133,6 +139,17 @@ impl ApplicationHandler<CaptureEvent> for WebCask {
         }
     }
 }
+fn load_window_icon(path: &Path) -> Option<winit::window::Icon> {
+    let file = fs::File::open(path).ok()?;
+    let icons = ico::IconDir::read(file).ok()?;
+    let selected = icons.entries().iter()
+        .find(|entry| entry.width() == 48)
+        .or_else(|| icons.entries().first())?;
+    let image = selected.decode().ok()?;
+    winit::window::Icon::from_rgba(
+        image.rgba_data().to_vec(), image.width(), image.height()
+    ).ok()
+}
 fn main() {
     if let Err(err) = run() {
         eprintln!("WebCask Runtime: {err}");
@@ -145,6 +162,7 @@ fn run() -> Result<(), String> {
         .map(|pair| pair[1].as_str()).ok_or("Usage: webcask-runtime --app-id UUID")?;
     let app = webcask_core::get_app(id)?;
     let profile = webcask_core::profile_path(id)?;
+    let icon_path = webcask_core::app_path(id)?.join("icon.ico");
     fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let game_focus = app.game_focus;
     let capture_mode = args.iter().any(|arg| arg == "--capture");
@@ -172,7 +190,7 @@ fn run() -> Result<(), String> {
     events.run_app(&mut WebCask {
         title: if capture_mode { format!("WebCask Capture · {}", app.name) } else { app.name },
         url, window: None, webview: None, context: None, profile, game_focus,
-        window_mode, window_width, window_height, capture
+        window_mode, window_width, window_height, icon_path, capture
     }).map_err(|e| e.to_string())
 }
 fn serve_local(app: &InstalledApp) -> Result<String, String> {

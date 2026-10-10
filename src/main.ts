@@ -3,7 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import './style.css';
 
 type WindowMode = 'windowed' | 'maximized' | 'fullscreen';
-type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null; gameFocus?: boolean; entryPath?: string | null; windowMode?: WindowMode; windowWidth?: number; windowHeight?: number };
+type InstalledApp = { id: string; name: string; kind: 'online' | 'local'; url: string | null; port: number | null; gameFocus?: boolean; entryPath?: string | null; windowMode?: WindowMode; windowWidth?: number; windowHeight?: number; iconData?: string | null };
 type Mode = 'website' | 'game';
 let apps: InstalledApp[] = [];
 let mode: Mode = 'website';
@@ -14,6 +14,7 @@ let draftUrl = '';
 let editingId: string | null = null;
 let optionsSaving = false;
 let optionsError = '';
+let iconBusy = false;
 let feedback: { kind: 'info' | 'error' | 'success'; message: string } | null = null;
 
 function formMessage(kind: 'info' | 'error' | 'success', message: string) {
@@ -97,6 +98,8 @@ function render() {
   document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(button => button.onclick = () => action(button.dataset.action!, button.dataset.id!));
   document.querySelector<HTMLFormElement>('#game-options-form')?.addEventListener('submit', saveOptions);
   document.querySelector<HTMLButtonElement>('#game-options-close')?.addEventListener('click', closeOptions);
+  document.querySelector<HTMLButtonElement>('#choose-icon')?.addEventListener('click', chooseCustomIcon);
+  document.querySelector<HTMLButtonElement>('#detect-icon')?.addEventListener('click', restoreAppIcon);
   document.querySelector<HTMLButtonElement>('#game-options-cancel')?.addEventListener('click', closeOptions);
   document.querySelector<HTMLDivElement>('.options-backdrop')?.addEventListener('click', event => {
     if (event.target === event.currentTarget) closeOptions();
@@ -110,7 +113,8 @@ function render() {
 }
 function renderApp(a: InstalledApp): string {
   const local = a.kind === 'local';
-  return '<article class="app-card"><div class="app-icon ' + (local ? 'game-icon' : '') + '">' + (local ? '▣' : '◎') +
+  return '<article class="app-card"><div class="app-icon ' + (local ? 'game-icon' : '') +
+    '" data-icon-for="' + a.id + '">' + iconMarkup(a) +
     '</div><div class="app-meta"><h3>' + escapeHtml(a.name) + '</h3><p>' + (local ? 'OFFLINE GAME' : 'WEB APPLICATION') +
     '</p><div class="app-url">' + escapeHtml(local ? 'Local HTML5 / WASM package' : (a.url ?? '')) + '</div></div>' +
     '<div class="app-actions"><button class="secondary" data-action="options" data-id="' + a.id + '" title="Adjust Game View, launch window mode, and size">⚙ Game Options</button>' +
@@ -118,6 +122,62 @@ function renderApp(a: InstalledApp): string {
     '<button class="primary" data-action="launch" data-id="' + a.id + '">▶ Launch</button>' +
     '<button class="secondary" data-action="shortcut" data-id="' + a.id + '" title="Create desktop shortcut">↗ Shortcut</button>' +
     '<button class="danger" data-action="remove" data-id="' + a.id + '" title="Uninstall">×</button></div></article>';
+}
+function iconMarkup(app: InstalledApp): string {
+  if (app.iconData?.startsWith('data:image/png;base64,')) {
+    return '<img class="app-image" src="' + escapeHtml(app.iconData) + '" alt="" />';
+  }
+  return app.kind === 'local' ? '▣' : '◎';
+}
+function applyIcon(id: string, data: string) {
+  const app = apps.find(item => item.id === id);
+  if (!app) return;
+  app.iconData = data;
+  document.querySelectorAll<HTMLElement>('[data-icon-for="' + id + '"]').forEach(element => {
+    element.innerHTML = iconMarkup(app);
+  });
+}
+function iconMessage(message: string, error = false) {
+  const element = document.querySelector<HTMLElement>('#icon-feedback');
+  if (element) {
+    element.textContent = message;
+    element.className = error ? 'icon-feedback error' : 'icon-feedback';
+  }
+}
+async function setIcon(id: string, command: string, path?: string) {
+  if (iconBusy) return;
+  iconBusy = true;
+  document.querySelectorAll<HTMLButtonElement>('#choose-icon, #detect-icon')
+    .forEach(button => button.disabled = true);
+  iconMessage('Preparing your app icon…');
+  try {
+    const data = await invoke<string>(command, path ? { id, path } : { id });
+    applyIcon(id, data);
+    iconMessage('Icon saved. Reopen the app to update its window icon.');
+  } catch (error) {
+    iconMessage(errorText(error), true);
+  } finally {
+    iconBusy = false;
+    document.querySelectorAll<HTMLButtonElement>('#choose-icon, #detect-icon')
+      .forEach(button => button.disabled = false);
+  }
+}
+async function chooseCustomIcon() {
+  const id = editingId;
+  if (!id || iconBusy) return;
+  try {
+    const file = await open({
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'Icon images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico', 'gif', 'bmp'] }],
+    });
+    if (typeof file === 'string') await setIcon(id, 'set_app_icon', file);
+  } catch (error) {
+    iconMessage('Could not choose icon: ' + errorText(error), true);
+  }
+}
+async function restoreAppIcon() {
+  if (editingId && !iconBusy) await setIcon(editingId, 'detect_app_icon');
 }
 function renderOptions(): string {
   if (!editingId) return '';
@@ -138,6 +198,14 @@ function renderOptions(): string {
     '<h2 id="options-title">Game Options</h2><p>' + escapeHtml(app.name) +
     '</p></div><button id="game-options-close" type="button" class="options-x" aria-label="Close options">×</button></header>' +
     '<form id="game-options-form">' +
+    '<div class="options-icon-row"><div class="options-icon-preview" data-icon-for="' +
+    app.id + '">' + iconMarkup(app) + '</div><div class="options-icon-controls">' +
+    '<label class="options-label">APPLICATION ICON</label>' +
+    '<div class="options-icon-buttons"><button class="secondary" id="choose-icon" type="button">Choose Image</button>' +
+    '<button class="secondary" id="detect-icon" type="button">' +
+    (app.kind === 'online' ? 'Get Website Icon' : 'Get Game Icon') + '</button></div>' +
+    '<p id="icon-feedback" class="icon-feedback" aria-live="polite">PNG, JPG, WebP, or ICO. ' +
+    'This icon is also used by WebCask and desktop shortcuts.</p></div></div>' +
     '<label class="options-check"><input id="opt-game-view" type="checkbox"' +
     (app.gameFocus ? ' checked' : '') + '><span><strong>Launch in Game View</strong>' +
     '<small>Focus the detected game canvas or iframe, hiding surrounding website elements.</small></span></label>' +
@@ -161,11 +229,12 @@ function openOptions(id: string) {
   editingId = id;
   optionsError = '';
   optionsSaving = false;
+  iconBusy = false;
   render();
-  document.querySelector<HTMLInputElement>('#opt-game-view')?.focus();
+  document.querySelector<HTMLButtonElement>('#choose-icon')?.focus();
 }
 function closeOptions() {
-  if (optionsSaving) return;
+  if (optionsSaving || iconBusy) return;
   editingId = null;
   optionsError = '';
   render();
