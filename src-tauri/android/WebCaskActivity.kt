@@ -1,5 +1,6 @@
 package __PACKAGE__
 
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.os.Message
@@ -23,6 +24,9 @@ class WebCaskActivity : TauriActivity() {
     @Volatile private var foreground = true
     @Volatile private var lastMainPulse = SystemClock.elapsedRealtime()
     @Volatile private var mainStallReported = false
+    // This reference belongs to this Activity's lifecycle. Rotation should
+    // change the existing WebView's layout, not destroy its JS/game state.
+    private var playerWebView: WebView? = null
     private val watchdog = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "WebCaskNativeWatchdog").apply { isDaemon = true }
     }
@@ -61,6 +65,7 @@ class WebCaskActivity : TauriActivity() {
 
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
+        playerWebView = webView
         WebCaskNativeLog.write(this, "info", "native-webview-created",
             "Android WebView object created", "No game JavaScript required.")
         val priorRenderer = webView.webViewRenderProcessClient
@@ -113,6 +118,24 @@ class WebCaskActivity : TauriActivity() {
         webView.post(observer)
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val orientation = when (newConfig.orientation) {
+            Configuration.ORIENTATION_LANDSCAPE -> "landscape"
+            Configuration.ORIENTATION_PORTRAIT -> "portrait"
+            else -> "undefined"
+        }
+        WebCaskNativeLog.write(this, "info", "native-configuration-changed",
+            "Android player changed orientation without Activity recreation",
+            "Orientation: " + orientation + ". Existing WebView and game state retained.")
+        // Let the game receive the browser's normal resize events when Android
+        // updates the View dimensions. No synthetic JS resize or forced reload.
+        playerWebView?.post {
+            playerWebView?.requestLayout()
+            playerWebView?.invalidate()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         foreground = true
@@ -130,6 +153,7 @@ class WebCaskActivity : TauriActivity() {
 
     override fun onDestroy() {
         alive = false
+        playerWebView = null
         watchdog.shutdownNow()
         WebCaskNativeLog.write(this, "info", "native-activity-destroyed",
             "WebCask Activity closing")
@@ -155,9 +179,28 @@ private class WebCaskConsoleClient(
                     .fragment(null).build().toString().take(200)
             } catch (_: Exception) { "unknown source" }
             val ownDiagnostics = message.message().startsWith("[WebCask diagnostics")
-            WebCaskNativeLog.write(activity, if (ownDiagnostics) "error" else severity,
-                if (ownDiagnostics) "native-instrumentation-error" else "native-console-" + severity,
-                if (ownDiagnostics) "WebCask diagnostic script failed" else "WebView console " + severity,
+            // These five globals belong to Tauri/Wry's own JavaScript bootstrap.
+            // The errors appear even in native-only mode, with all WebCask
+            // page scripts disabled. Do not attribute them to the game.
+            val tauriGlobals = setOf("postMessage", "metadata",
+                "__TAURI_PATTERN__", "path", "__TAURI_EVENT_PLUGIN_INTERNALS__")
+            val conflicted = message.message().removePrefix(
+                "Uncaught TypeError: Cannot redefine property: ").trim()
+            val tauriConflict = level == ConsoleMessage.MessageLevel.ERROR &&
+                message.message().startsWith("Uncaught TypeError: Cannot redefine property: ") &&
+                conflicted in tauriGlobals
+            val code = when {
+                ownDiagnostics -> "native-instrumentation-error"
+                tauriConflict -> "native-tauri-injection-conflict"
+                else -> "native-console-" + severity
+            }
+            val title = when {
+                ownDiagnostics -> "WebCask diagnostic script failed"
+                tauriConflict -> "Tauri runtime attempted to redefine an initialized property"
+                else -> "WebView console " + severity
+            }
+            WebCaskNativeLog.write(activity, if (ownDiagnostics || tauriConflict) "error" else severity,
+                code, title,
                 "Line " + message.lineNumber() + " (" + location + "): " + message.message().take(600))
         }
         return previous.onConsoleMessage(message)
