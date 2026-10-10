@@ -249,3 +249,37 @@ changed by this fix.
 
 For Tauri Android multi-window requirements see
 https://v2.tauri.app/learn/mobile-multiwindow/.
+
+## Native Android WebView debugger — independent of game scripts
+
+WebCask also records Android-side diagnostics directly in Kotlin:
+- Activity creation requested, `onCreate` completed, resumed/paused/destroyed.
+- WebView object creation and loading-progress milestones.
+- JavaScript console **errors and warnings** through Android WebChromeClient
+  (even if the injected WebCask page script never starts).
+- Android WebView renderer unresponsive/recovered callbacks.
+- A separate native Activity UI-thread heartbeat; a gap longer than about
+  12 seconds generates an error, even when the JS runtime is blocked.
+
+The native journal is bounded (under approximately 180 KiB), stored inside
+SitePocket's private Android files directory, and printed under the
+`WebCaskNative` Android Logcat tag. A restricted native plugin bridge reads
+these entries from Kotlin into the **same SitePocket error-only debugger**
+with the current game's ID. The manager can show them after a freeze and
+restart; the game page is not given any extra native API permissions.
+
+The native logger wraps Tauri's existing WebChromeClient instead of
+replacing its file-picker, permissions, popup, fullscreen-media, and
+JavaScript-dialog behavior; if the original handler is not yet installed,
+WebCask waits to attach its wrapper. It does not log entire pages, request
+bodies, authentication headers, or cookies. Native console error text and
+script file names **can** contain details of a game; review copied reports
+before sharing.
+
+The most useful diagnosis boundary for BlockBend is now:
+`android-activity-build-requested` -> `native-activity-create-requested`
+-> `native-activity-created` -> `native-webview-created` ->
+`native-webview-progress` -> page-ready. If the report stops before
+the native Activity begins, creation/registration is suspect. If Android
+says its renderer is unresponsive, resource-intensive game code or the
+WebView renderer is suspect instead.

@@ -4,7 +4,7 @@
 //! or arbitrary web-page content beyond the error message/stack.
 use serde::Serialize;
 use std::{
-    collections::HashMap, fs,
+    collections::{HashMap, HashSet}, fs,
     sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -15,6 +15,8 @@ use webcask_core::get_app;
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
     pub id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_event_id: Option<String>,
     pub app_id: String,
     pub app_name: String,
     pub time: u64,
@@ -28,6 +30,7 @@ pub struct Diagnostic {
 struct State {
     history: Vec<Diagnostic>,
     current_id: u64,
+    native_seen: HashSet<String>,
     started: HashMap<String, (u64, Instant, bool)>,
 }
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
@@ -45,7 +48,8 @@ fn state() -> &'static Mutex<State> {
             .and_then(|data| serde_json::from_slice::<Vec<Diagnostic>>(&data).ok())
             .unwrap_or_default();
         let current_id = history.iter().map(|event| event.id).max().unwrap_or(0);
-        let mut restored = State { history, current_id, started: HashMap::new() };
+        let native_seen = history.iter().filter_map(|e| e.native_event_id.clone()).collect();
+        let mut restored = State { history, current_id, native_seen, started: HashMap::new() };
         // This runs once per process, so an interrupted launch from a
         // previous process can be reported even if Android killed the app
         // before the watchdog thread had time to fire.
@@ -77,7 +81,8 @@ fn push(item: &mut State, app_id: &str, severity: &str,
     let name = get_app(app_id).ok().map(|app| app.name)
         .unwrap_or_else(|| "Unknown game".to_owned());
     item.history.push(Diagnostic {
-        id: item.current_id, app_id: app_id.to_owned(), app_name: name,
+        id: item.current_id, native_event_id: None,
+        app_id: app_id.to_owned(), app_name: name,
         time: now(), severity: severity.into(), source: source.into(),
         code: code.into(), message: limit(message, 500), detail: limit(detail, 1800),
     });
@@ -135,9 +140,71 @@ pub fn list(since: u64) -> Vec<Diagnostic> {
         s.history.iter().filter(|item| item.id > since).cloned().collect()
     }).unwrap_or_default()
 }
+
+/// Ingest native Android Activity/WebView log lines from the app-private
+/// native journal. The WebView may never have executed injected JavaScript.
+#[cfg(target_os = "android")]
+pub fn ingest_native_journal(content: &str) {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct NativeEvent {
+        id: String,
+        time: u64,
+        app_id: String,
+        severity: String,
+        source: String,
+        code: String,
+        message: String,
+        detail: String,
+    }
+    // Drop partial JSON lines after a process crash and avoid huge payloads.
+    if content.len() > 220_000 { return; }
+    let Ok(mut state) = state().lock() else { return; };
+    for line in content.lines().take(500) {
+        let Ok(event) = serde_json::from_str::<NativeEvent>(line) else { continue; };
+        if event.id.len() > 80 || event.id.is_empty() ||
+            !matches!(event.severity.as_str(), "info"|"warning"|"error") ||
+            !event.code.starts_with("native-") {
+            continue;
+        }
+        if !state.native_seen.insert(event.id.clone()) { continue; }
+        let id = if uuid::Uuid::parse_str(&event.app_id).is_ok() {
+            event.app_id.clone()
+        } else {
+            state.history.iter().rev()
+                .find(|e| e.code == "launch-started")
+                .map(|e| e.app_id.clone()).unwrap_or_default()
+        };
+        if id.is_empty() { continue; }
+        let name = get_app(&id).ok().map(|app| app.name)
+            .unwrap_or_else(|| "Unknown game".into());
+        state.current_id += 1;
+        let event_number = state.current_id;
+        state.history.push(Diagnostic {
+            id: event_number, native_event_id: Some(event.id),
+            app_id: id, app_name: name, time: event.time,
+            severity: event.severity, source: limit(event.source, 40),
+            code: limit(event.code, 80),
+            message: limit(event.message, 500), detail: limit(event.detail, 1800),
+        });
+        if state.history.len() > 100 {
+            let count = state.history.len() - 100;
+            state.history.drain(..count);
+        }
+    }
+    // Retain the small in-process seen set even when old visible timeline
+    // entries roll off; otherwise polling a longer Kotlin journal can
+    // repeatedly re-import events we already displayed.
+    if let (Ok(path), Ok(data)) = (file(), serde_json::to_vec(&state.history)) {
+        let tmp = path.with_extension("json.tmp");
+        if fs::write(&tmp, data).is_ok() { let _ = fs::rename(tmp, path); }
+    }
+}
+
 pub fn clear() {
     if let Ok(mut s) = state().lock() {
         s.history.clear();
+        s.native_seen.clear();
         // Keep monotonically increasing IDs so polling clients do not miss
         // events after the user clears the previous report.
         if let Ok(p) = file() { let _ = fs::remove_file(p); }

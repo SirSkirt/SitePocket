@@ -34,6 +34,12 @@ pub fn launch(app: AppHandle, id: String) -> Result<(), String> {
     // activity on multi-window capable devices (API 32+).
     let main = app.get_webview_window("main")
         .ok_or("SitePocket's main Android window is unavailable")?;
+    // Tie native Kotlin lifecycle events to the launching game before
+    // requesting the secondary Activity. Errors here do not prevent launch.
+    if let Err(error) = tauri_plugin_android_zip_import::set_active_game(&app, &item.id) {
+        crate::diagnostics::record(&item.id, "warning", "native-webview",
+            "native-logger-setup-failed", "Could not initialize native WebView logger", &error);
+    }
     crate::diagnostics::begin(&item.id);
     let launch_id = item.id.clone();
     let mut builder = WebviewWindowBuilder::new(&main, label, WebviewUrl::External(url))

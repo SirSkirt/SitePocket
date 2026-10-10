@@ -17,11 +17,32 @@ struct AppListing {
     icon_data: Option<String>,
 }
 #[tauri::command]
-fn get_debug_events(since: u64) -> Vec<diagnostics::Diagnostic> {
+async fn get_debug_events(app: tauri::AppHandle, since: u64)
+    -> Vec<diagnostics::Diagnostic> {
+    #[cfg(target_os = "android")]
+    {
+        // The bridge runs on a worker: it must not block Tauri's main
+        // Activity if the WebView or a Kotlin callback is unresponsive.
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            if let Ok(journal) = tauri_plugin_android_zip_import::read_native_events(&app) {
+                diagnostics::ingest_native_journal(&journal);
+            }
+        }).await;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
     diagnostics::list(since)
 }
 #[tauri::command]
-fn clear_debug_events() {
+async fn clear_debug_events(app: tauri::AppHandle) {
+    #[cfg(target_os = "android")]
+    {
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let _ = tauri_plugin_android_zip_import::clear_native_events(&app);
+        }).await;
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
     diagnostics::clear();
 }
 #[tauri::command]

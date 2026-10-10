@@ -190,7 +190,7 @@ jobs:
           package = match.group(1)
           print('SitePocket Android Activity package:', package)
 
-          for name in ('WebCaskActivity.kt', 'WebCaskSplitInitializer.kt'):
+          for name in ('WebCaskActivity.kt', 'WebCaskNativeLog.kt', 'WebCaskSplitInitializer.kt'):
               target = activity.parent / name
               target.write_text((src / name).read_text().replace('__PACKAGE__', package))
               print('Added', target)

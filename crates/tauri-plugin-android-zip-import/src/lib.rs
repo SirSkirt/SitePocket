@@ -52,3 +52,48 @@ pub fn stage_zip<R: Runtime>(app: &tauri::AppHandle<R>, uri: String)
     }
     Ok(file)
 }
+
+
+#[cfg(target_os = "android")]
+#[derive(Serialize)]
+struct ActiveGameRequest { app_id: String }
+#[cfg(target_os = "android")]
+#[derive(Serialize)]
+struct EmptyRequest {}
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+struct NativeAck { ok: bool }
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+struct NativeLog { content: String }
+
+/// Records the currently launching game's UUID in app-private preferences.
+/// The native Activity can associate pre-JavaScript events with this game.
+#[cfg(target_os = "android")]
+pub fn set_active_game<R: Runtime>(app: &tauri::AppHandle<R>, app_id: &str)
+    -> Result<(), String> {
+    let ack: NativeAck = app.state::<ZipBridge<R>>().0
+        .run_mobile_plugin("setActiveGame",
+            ActiveGameRequest { app_id: app_id.into() })
+        .map_err(|e| format!("Native logger setup: {e}"))?;
+    if ack.ok { Ok(()) } else { Err("Native logger setup rejected".into()) }
+}
+
+/// Native Activity / Android WebView event journal (no injected script needed).
+#[cfg(target_os = "android")]
+pub fn read_native_events<R: Runtime>(app: &tauri::AppHandle<R>)
+    -> Result<String, String> {
+    let result: NativeLog = app.state::<ZipBridge<R>>().0
+        .run_mobile_plugin("readNativeEvents", EmptyRequest {})
+        .map_err(|e| format!("Native WebView report unavailable: {e}"))?;
+    Ok(result.content)
+}
+
+#[cfg(target_os = "android")]
+pub fn clear_native_events<R: Runtime>(app: &tauri::AppHandle<R>)
+    -> Result<(), String> {
+    let ack: NativeAck = app.state::<ZipBridge<R>>().0
+        .run_mobile_plugin("clearNativeEvents", EmptyRequest {})
+        .map_err(|e| format!("Native WebView clear failed: {e}"))?;
+    if ack.ok { Ok(()) } else { Err("Native WebView clear rejected".into()) }
+}

@@ -12,6 +12,11 @@ import java.io.File
 import java.util.UUID
 
 @InvokeArg
+internal class ActiveGameArgs {
+    lateinit var appId: String
+}
+
+@InvokeArg
 internal class StageArgs {
     lateinit var uri: String
 }
@@ -25,6 +30,51 @@ internal class StageArgs {
  */
 @TauriPlugin
 class ZipImportPlugin(private val activity: Activity) : Plugin(activity) {
+    /**
+     * Called only through Rust before requesting the Android player Activity.
+     * Persists game identity for Kotlin lifecycle logging, even if the WebView
+     * hangs before JavaScript or Rust's page-load callback can execute.
+     */
+    @Command
+    fun setActiveGame(invoke: Invoke) {
+        val args = try { invoke.parseArgs(ActiveGameArgs::class.java) }
+        catch (_: Exception) {
+            invoke.reject("Invalid game identity for native logger")
+            return
+        }
+        try {
+            UUID.fromString(args.appId)
+            val saved = activity.getSharedPreferences("webcask-native-debug", Activity.MODE_PRIVATE)
+                .edit().putString("activeGameId", args.appId).commit()
+            if (!saved) throw IllegalStateException("Android could not persist current game")
+            invoke.resolve(JSObject().apply { put("ok", true) })
+        } catch (err: Exception) {
+            invoke.reject("Could not initialize Android native logger: " + err.message)
+        }
+    }
+
+    /** A bounded, read-only view of events written by WebCaskActivity. */
+    @Command
+    fun readNativeEvents(invoke: Invoke) {
+        try {
+            val journal = File(activity.filesDir, "webcask-native-webview.jsonl")
+            val text = if (journal.isFile) journal.readText(Charsets.UTF_8).takeLast(180_000) else ""
+            invoke.resolve(JSObject().apply { put("content", text) })
+        } catch (err: Exception) {
+            invoke.reject("Could not read native WebView report: " + err.message)
+        }
+    }
+
+    @Command
+    fun clearNativeEvents(invoke: Invoke) {
+        try {
+            File(activity.filesDir, "webcask-native-webview.jsonl").delete()
+            invoke.resolve(JSObject().apply { put("ok", true) })
+        } catch (err: Exception) {
+            invoke.reject("Could not clear native WebView report: " + err.message)
+        }
+    }
+
     @Command
     fun stageZip(invoke: Invoke) {
         val args = try { invoke.parseArgs(StageArgs::class.java) }

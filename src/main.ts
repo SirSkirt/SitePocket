@@ -563,6 +563,7 @@ function reportText(): string {
     'App: ' + (problem?.appName || records[0]?.appName || 'Unknown'),
     'Report generated: ' + new Date().toISOString(),
     'Device WebView: ' + navigator.userAgent,
+    'Native Android Activity/WebView events do not require injected JavaScript.',
     'Important: A timeout is a suspected startup stall, not proof of a game bug.',
     '',
     'EVENT TIMELINE'
@@ -577,6 +578,12 @@ function reportText(): string {
   return lines.join('\n');
 }
 function debugDiagnosis(event: DebugEvent): string {
+  if (event.code === 'native-ui-thread-stalled')
+    return 'Android itself detected the WebCask Activity UI thread stopped responding, independently of any game script. Check the last native Activity stage in the report.';
+  if (event.code === 'native-renderer-unresponsive')
+    return 'Android reported the WebView renderer is unresponsive. This can be caused by intensive game code or the WebView engine; the native and game events help separate them.';
+  if (event.code === 'native-console-error')
+    return 'Android captured a WebView console error through its native WebChromeClient, even if WebCask JavaScript diagnostics could not start.';
   if (event.code === 'startup-timeout')
     return 'WebCask did not receive a game-page readiness signal. This may indicate an Android player/window freeze, or that the game blocked page loading.';
   if (event.source === 'assets')
