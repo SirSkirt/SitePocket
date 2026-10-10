@@ -339,3 +339,42 @@ This fix does NOT establish the origin of the original anonymous
 `Script error.` entries. A new APK still requires CI verification and
 physical-phone testing; the existing native-only A/B option remains the
 right comparison once startup works again.
+
+### Android orientation lifecycle and Tauri runtime injection conflicts
+
+A real S25 Ultra native-only report on 2026-10-10 proved the native
+WebChromeClient was installed *before* game navigation, and captured five
+distinct exceptions immediately after page load:
+`Cannot redefine property: postMessage`, `metadata`,
+`__TAURI_PATTERN__`, `path`, and
+`__TAURI_EVENT_PLUGIN_INTERNALS__`. These are Tauri/Wry framework
+bootstrap names, NOT BlockBend's Defender Engine. Native-only mode disables
+our game-page JS but **does not disable Tauri's own initialization scripts**.
+The native logger now assigns those exact cases
+`native-tauri-injection-conflict`. We are **not** hiding the exceptions or
+asserting that their upstream root cause is fixed; longer term, a raw
+native Android WebView runner without the manager's Tauri bootstrap is a
+possible architectural improvement if they affect gameplay.
+
+The same report showed the game launched and completed navigation, but
+rotation then produced a black screen with multiple
+`WebCaskActivity.onDestroy/onCreate` cycles. The Android setup script was
+registering the secondary activity WITHOUT `android:configChanges`.
+That separate activity does not inherit the main Tauri activity's manifest
+settings, so Android discarded its WebView and game state on rotation.
+
+The Android build now registers WebCaskActivity with
+`orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard`
+in `android:configChanges` and verifies that the generated manifest
+contains the attribute. `WebCaskActivity.onConfigurationChanged` logs
+`native-configuration-changed` and refreshes the **existing** WebView's
+layout and rendering rather than reloading the game. The Node CI checks
+protect the registration and the lifecycle handler.
+
+Expected on-device sequence: load the game; rotate portrait to landscape
+and back; see `native-configuration-changed` for each size/orientation
+change and **no** `native-activity-destroyed` / `native-activity-created`
+pair caused by rotation. The game should retain its scene, state and input.
+Other Android lifecycle events (e.g. process death) can still recreate the
+Activity; they need separate save/restore testing. New builds and actual
+phone behavior have not yet been verified by this documentation.
