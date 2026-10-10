@@ -29,6 +29,19 @@ let touchDraftEnabled = true;
 let touchSaving = false;
 let touchError = '';
 let touchNextId = 0;
+type DebugEvent = {
+  id: number; appId: string; appName: string; time: number;
+  severity: 'info' | 'warning' | 'error';
+  source: string; code: string; message: string; detail: string;
+};
+let debugEvents: DebugEvent[] = [];
+let debugCursor = 0;
+let debugActiveApp: string | null = null;
+let debugOpen = false;
+const dismissedValue = Number(localStorage.getItem('sitepocket-debug-dismissed') || '0');
+let debugDismissed = Number.isFinite(dismissedValue) ? dismissedValue : 0;
+let debugPolling = false;
+
 let feedback: { kind: 'info' | 'error' | 'success'; message: string } | null = null;
 
 function formMessage(kind: 'info' | 'error' | 'success', message: string) {
@@ -96,7 +109,8 @@ function render() {
     '<div class="empty"><div class="empty-icon">▦</div><h3>Nothing in your pocket yet</h3><p>Install your first site or import a game to get started.</p></div>') +
     '</div><footer>SitePocket manages your apps · WebCask runs them independently · ' +
     (onAndroid ? 'Android Preview' : 'Windows Alpha') + '</footer></main></div>' +
-    renderOptions() + renderTouchEditor() + '<div id="toast" class="toast"></div>';
+    renderOptions() + renderTouchEditor() + renderDebugger() +
+    '<div id="toast" class="toast"></div>';
   document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
     mode = button.dataset.mode as Mode;
     selectedPath = ''; draftName = ''; draftUrl = ''; feedback = null;
@@ -111,6 +125,10 @@ function render() {
     draftUrl = (e.target as HTMLInputElement).value;
     if (feedback?.kind === 'error') clearFormMessage();
   });
+  document.querySelector<HTMLButtonElement>('#debug-close')?.addEventListener('click', dismissDebugger);
+  document.querySelector<HTMLButtonElement>('#debug-close-bottom')?.addEventListener('click', dismissDebugger);
+  document.querySelector<HTMLButtonElement>('#debug-copy')?.addEventListener('click', copyDebugReport);
+  document.querySelector<HTMLButtonElement>('#debug-clear')?.addEventListener('click', clearDebugReport);
   document.getElementById('refresh-list')?.addEventListener('click', refresh);
   document.getElementById('pick-folder')?.addEventListener('click', () => pick(true));
   document.getElementById('pick-zip')?.addEventListener('click', () => pick(false));
@@ -532,6 +550,118 @@ async function submitInstall(ev: Event) {
     }
   }
 }
+
+function selectedDebugEvents(): DebugEvent[] {
+  if (!debugActiveApp) return [];
+  return debugEvents.filter(event => event.appId === debugActiveApp).slice(-40);
+}
+function reportText(): string {
+  const records = selectedDebugEvents();
+  const problem = [...records].reverse().find(event => event.severity === 'error');
+  const lines = [
+    'SitePocket / WebCask — Android Debug Report',
+    'App: ' + (problem?.appName || records[0]?.appName || 'Unknown'),
+    'Report generated: ' + new Date().toISOString(),
+    'Device WebView: ' + navigator.userAgent,
+    'Important: A timeout is a suspected startup stall, not proof of a game bug.',
+    '',
+    'EVENT TIMELINE'
+  ];
+  records.forEach(event => {
+    lines.push(
+      new Date(event.time).toISOString() + ' [' + event.severity.toUpperCase() + '] ' +
+      event.source.toUpperCase() + ' / ' + event.code + ': ' + event.message
+    );
+    if (event.detail) lines.push('  ' + event.detail);
+  });
+  return lines.join('\n');
+}
+function debugDiagnosis(event: DebugEvent): string {
+  if (event.code === 'startup-timeout')
+    return 'WebCask did not receive a game-page readiness signal. This may indicate an Android player/window freeze, or that the game blocked page loading.';
+  if (event.source === 'assets')
+    return 'WebCask detected an unavailable or failed game resource. Check the ZIP for this file and whether the game expects an online server.';
+  if (event.source === 'game')
+    return 'The game page raised a JavaScript error or rejected a promise. The stack trace below may point to the game code.';
+  return 'The WebCask runtime reported a launch or window error. See the events below for the last successful startup stage.';
+}
+function renderDebugger(): string {
+  if (!debugOpen || !debugActiveApp) return '';
+  const relevant = selectedDebugEvents();
+  const last = [...relevant].reverse().find(event => event.severity === 'error');
+  if (!last) return '';
+  return '<div class="debug-backdrop" role="presentation">' +
+    '<section class="debug-dialog" role="alertdialog" aria-modal="true" aria-labelledby="debug-title" aria-describedby="debug-summary">' +
+    '<div class="debug-head"><div><div class="eyebrow">WEBCASK DEBUGGER</div>' +
+    '<h2 id="debug-title">An error was detected</h2>' +
+    '<p>' + escapeHtml(last.appName) + '</p></div>' +
+    '<button class="options-x" id="debug-close" aria-label="Close debugger">×</button></div>' +
+    '<p class="debug-summary" id="debug-summary">' + escapeHtml(debugDiagnosis(last)) + '</p>' +
+    '<div class="debug-event"><span class="debug-pill">' + escapeHtml(last.source.toUpperCase()) +
+    '</span><strong>' + escapeHtml(last.message) + '</strong><small>' +
+    escapeHtml(last.code) + '</small></div>' +
+    '<label class="options-label" for="debug-report">DEBUG REPORT — ' + relevant.length + ' EVENTS</label>' +
+    '<textarea class="debug-report" id="debug-report" readonly spellcheck="false">' +
+    escapeHtml(reportText()) + '</textarea>' +
+    '<p class="debug-help">Copy this report and send it with a screenshot. Previous startup stages are kept even if the game freezes. SitePocket does not automatically upload logs.</p>' +
+    '<div class="debug-actions"><button class="secondary" id="debug-clear" type="button">Clear Report</button>' +
+    '<button class="secondary" id="debug-copy" type="button">Copy Report</button>' +
+    '<button class="primary" id="debug-close-bottom" type="button">Close</button></div>' +
+    '</section></div>';
+}
+function dismissDebugger() {
+  debugOpen = false;
+  debugDismissed = Math.max(debugDismissed, ...debugEvents.map(event => event.id), 0);
+  localStorage.setItem('sitepocket-debug-dismissed', String(debugDismissed));
+  render();
+}
+async function copyDebugReport() {
+  const report = reportText();
+  try {
+    await navigator.clipboard.writeText(report);
+    notice('Debug report copied. You can paste it into this chat.');
+  } catch (_) {
+    const target = document.querySelector<HTMLTextAreaElement>('#debug-report');
+    if (target) {
+      target.focus(); target.select();
+      if (document.execCommand('copy')) notice('Debug report copied.');
+      else notice('Report selected. Use Android Copy to copy the text.', true);
+    }
+  }
+}
+async function clearDebugReport() {
+  await invoke('clear_debug_events');
+  debugDismissed = Math.max(debugDismissed, debugCursor);
+  localStorage.setItem('sitepocket-debug-dismissed', String(debugDismissed));
+  debugEvents = []; debugOpen = false; debugActiveApp = null;
+  render();
+}
+async function pollDebugger() {
+  if (debugPolling) return;
+  debugPolling = true;
+  try {
+    const arrivals = await invoke<DebugEvent[]>('get_debug_events', { since: debugCursor });
+    if (arrivals.length) {
+      debugCursor = Math.max(debugCursor, ...arrivals.map(event => event.id));
+      debugEvents = [...debugEvents, ...arrivals].slice(-100);
+      const fresh = arrivals.find(event => event.severity === 'error' && event.id > debugDismissed);
+      if (fresh) {
+        debugActiveApp = fresh.appId;
+        debugOpen = true;
+        render();
+      } else if (debugOpen) {
+        // Update the already visible report when later stages arrive.
+        const target = document.querySelector<HTMLTextAreaElement>('#debug-report');
+        if (target) target.value = reportText();
+      }
+    }
+  } catch (_) {
+    // The manager may be resuming from the Android WebView Activity; try next poll.
+  } finally {
+    debugPolling = false;
+  }
+}
+
 async function action(command: string, id: string) {
   const app = apps.find(a => a.id === id);
   if (!app) return;
@@ -542,10 +672,13 @@ async function action(command: string, id: string) {
       await invoke('capture_app', { id });
       notice('Capture window opened. Play through the game, then click Save Offline Candidate. Refresh your library after saving.');
     }
-    else if (command === 'launch') { await invoke('launch_app', { id }); notice('Launching ' + app.name + '…'); }
+    else if (command === 'launch') { await invoke('launch_app', { id }); notice('Launching ' + app.name + '…'); await pollDebugger(); }
     else if (command === 'shortcut') { const location = await invoke<string>('create_shortcut', { id }); notice('Shortcut created: ' + location); }
     else if (command === 'remove') { await invoke('remove_app', { id }); await refresh(); notice('Application removed.'); }
   } catch (e) {
+    if (command === 'launch') {
+      await pollDebugger();
+    }
     if (command === 'launch' && app.kind === 'local' && mode === 'game') {
       formMessage('error', 'Could not launch ' + app.name + ': ' + errorText(e));
     } else {
@@ -555,9 +688,15 @@ async function action(command: string, id: string) {
 }
 render();
 refresh();
+pollDebugger();
+window.setInterval(pollDebugger, 2500);
 
-window.addEventListener('focus', () => { if (!busy && !editingId) refresh(); });
+window.addEventListener('focus', () => {
+  if (!busy && !editingId && !debugOpen) refresh();
+  pollDebugger();
+});
 window.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && touchEditingId && !touchSaving) closeTouchEditor();
+  if (event.key === 'Escape' && debugOpen) dismissDebugger();
+  else if (event.key === 'Escape' && touchEditingId && !touchSaving) closeTouchEditor();
   else if (event.key === 'Escape' && editingId && !optionsSaving) closeOptions();
 });

@@ -223,3 +223,44 @@ footer{padding-top:38px;color:#577184;font-size:10px;text-align:center}
   .touch-row label{font-size:8px;}
   .touch-preview-button{font-size:9px;}
 }
+
+
+/* WebCask error-only debugger. Opened automatically for errors or launch
+   timeouts; remains hidden during normal gameplay. */
+.debug-backdrop {
+  position:fixed; inset:0; z-index:1400; padding:14px;
+  display:flex; justify-content:center; align-items:center;
+  background:rgba(4,12,19,.88);backdrop-filter:blur(5px);
+}
+.debug-dialog {
+  background:linear-gradient(138deg,#1d3542,#1b283a);
+  width:min(650px,100%);max-height:94dvh;overflow-y:auto;
+  border:1px solid #4a6175;border-radius:16px;
+  padding:23px;box-shadow:0 18px 70px #000b;
+}
+.debug-head {display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:17px;}
+.debug-head h2 {font-size:22px;margin:7px 0;}
+.debug-summary {padding:12px 14px;background:#183645;border-left:3px solid #e9a37b;border-radius:8px;color:#d5e7ed;font-size:12px;line-height:1.6;}
+.debug-event {
+  margin:15px 0;padding:12px;border:1px solid #4e6170;
+  border-radius:9px;background:#122737;display:grid;gap:8px;
+}
+.debug-event strong {color:#ffb8b3;font-size:13px;overflow-wrap:anywhere;}
+.debug-event small {color:#8aafbd;font-size:11px;}
+.debug-pill {font-size:9px;font-weight:900;letter-spacing:1.1px;color:#f1baa5;}
+.debug-report {
+  display:block;width:100%;box-sizing:border-box;min-height:180px;
+  max-height:40vh;resize:vertical;background:#0b1b2a;
+  border:1px solid #3d576b;border-radius:10px;color:#d4e9ef;
+  font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
+  padding:12px;white-space:pre;overflow:auto;
+  margin:10px 0;
+}
+.debug-help {font-size:11px;line-height:1.5;margin:9px 0 17px;}
+.debug-actions {display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end;}
+.debug-actions button {font-size:12px;}
+@media(max-width:550px){
+ .debug-dialog{padding:15px;}
+ .debug-actions button{flex:1 1 auto;}
+ .debug-report{font-size:10px;min-height:155px;}
+}

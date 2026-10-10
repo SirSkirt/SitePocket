@@ -4,7 +4,7 @@
 //! No internet is required after importing a self-contained game.
 use std::{
     collections::HashMap, fs,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Component, Path, PathBuf},
     sync::{Mutex, OnceLock},
@@ -43,14 +43,21 @@ pub fn serve(app: &InstalledApp) -> Result<String, String> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .map_err(|e| format!("Local game port {port} is unavailable: {e}"))?;
     guard.insert(app.id.clone(), port);
+    let game_id = app.id.clone();
+    crate::diagnostics::record(&app.id, "info", "runtime", "server-started",
+        "Local game server listening", &format!("127.0.0.1:{port}"));
     thread::spawn(move || {
         for incoming in listener.incoming() {
             match incoming {
                 Ok(stream) => {
                     let root = root.clone();
                     let index = entry_filename.clone();
+                    let game_id = game_id.clone();
                     thread::spawn(move || {
-                        if let Err(err) = handle_request(stream, &root, &index, port) {
+                        if let Err(err) = handle_request(stream, &root, &index, port, &game_id) {
+                            crate::diagnostics::record(&game_id, "error", "assets",
+                                "server-request-failed", "Local game server request failed",
+                                &err.to_string());
                             eprintln!("WebCask Android asset request: {err}");
                         }
                     });
@@ -62,8 +69,8 @@ pub fn serve(app: &InstalledApp) -> Result<String, String> {
     Ok(format!("http://127.0.0.1:{port}/"))
 }
 
-fn handle_request(mut stream: TcpStream, root: &Path, index: &std::ffi::OsStr, port: u16)
-    -> io::Result<()> {
+fn handle_request(mut stream: TcpStream, root: &Path, index: &std::ffi::OsStr,
+    port: u16, game_id: &str) -> io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))?;
     let mut request_line = String::new();
@@ -74,12 +81,14 @@ fn handle_request(mut stream: TcpStream, root: &Path, index: &std::ffi::OsStr, p
     let mut words = request_line.split_whitespace();
     let method = words.next().unwrap_or("");
     let target = words.next().unwrap_or("");
-    if method != "GET" && method != "HEAD" {
+    if method != "GET" && method != "HEAD" && method != "POST" {
         return response(&mut stream, 405, "text/plain", b"Method not allowed", false);
     }
     let head = method == "HEAD";
     let expected = format!("127.0.0.1:{port}");
     let mut valid_host = false;
+    let mut origin: Option<String> = None;
+    let mut content_length = 0_usize;
     for _ in 0..120 {
         let mut header = String::new();
         let n = input.read_line(&mut header)?;
@@ -88,6 +97,10 @@ fn handle_request(mut stream: TcpStream, root: &Path, index: &std::ffi::OsStr, p
         if let Some((name, value)) = header.trim_end().split_once(':') {
             if name.eq_ignore_ascii_case("host") {
                 valid_host = value.trim().eq_ignore_ascii_case(&expected);
+            } else if name.eq_ignore_ascii_case("origin") {
+                origin = Some(value.trim().to_owned());
+            } else if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse::<usize>().unwrap_or(usize::MAX);
             }
         }
     }
@@ -95,6 +108,33 @@ fn handle_request(mut stream: TcpStream, root: &Path, index: &std::ffi::OsStr, p
         return response(&mut stream, 403, "text/plain", b"Host not allowed", head);
     }
     let url_path = target.split(['?', '#']).next().unwrap_or("/");
+    if method == "POST" {
+        if url_path != "/__webcask_debug" ||
+           origin.as_deref() != Some(format!("http://{expected}").as_str()) ||
+           content_length == 0 || content_length > 4096 {
+            return response(&mut stream, 403, "text/plain", b"Diagnostics not allowed", false);
+        }
+        let mut buffer = vec![0u8; content_length];
+        input.read_exact(&mut buffer)?;
+        let record: serde_json::Value = match serde_json::from_slice(&buffer) {
+            Ok(value) => value,
+            Err(_) => return response(&mut stream, 400, "text/plain", b"Invalid diagnostics", false),
+        };
+        let kind = record.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let message = record.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let detail = record.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+        match kind {
+            "page-ready" => crate::diagnostics::ready(game_id, "page-ready"),
+            "script-error" | "promise-error" => crate::diagnostics::record(game_id,
+                "error", "game", kind, message, detail),
+            "resource-error" => crate::diagnostics::record(game_id,
+                "warning", "assets", kind, message, detail),
+            "long-task" => crate::diagnostics::record(game_id,
+                "warning", "game", kind, message, detail),
+            _ => {}
+        }
+        return response(&mut stream, 204, "text/plain", b"", false);
+    }
     let path = match percent_encoding::percent_decode_str(url_path).decode_utf8() {
         Ok(p) => p,
         Err(_) => return response(&mut stream, 400, "text/plain", b"Invalid URL", head),
@@ -107,7 +147,15 @@ fn handle_request(mut stream: TcpStream, root: &Path, index: &std::ffi::OsStr, p
     let selected = if relative.is_empty() { root.join(index) } else { root.join(relative) };
     let actual = match selected.canonicalize() {
         Ok(path) => path,
-        Err(_) => return response(&mut stream, 404, "text/plain", b"Not Found", head),
+        Err(_) => {
+            let lower = relative.to_ascii_lowercase();
+            if [".js", ".mjs", ".wasm", ".json", ".bin", ".data", ".css"]
+                .iter().any(|ext| lower.ends_with(ext)) {
+                crate::diagnostics::record(game_id, "error", "assets", "missing-file",
+                    "A game asset was not found", relative);
+            }
+            return response(&mut stream, 404, "text/plain", b"Not Found", head);
+        },
     };
     if !actual.starts_with(root) || !actual.is_file() {
         return response(&mut stream, 403, "text/plain", b"Outside game folder", head);
@@ -136,7 +184,7 @@ fn response(stream: &mut TcpStream, code: u16, mime: &str, bytes: &[u8], head: b
     -> io::Result<()> {
     let label = match code {
         400 => "Bad Request", 403 => "Forbidden", 404 => "Not Found",
-        405 => "Method Not Allowed", _ => "Error",
+        405 => "Method Not Allowed", 204 => "No Content", _ => "Error",
     };
     write!(stream,
         "HTTP/1.1 {code} {label}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\
@@ -161,7 +209,7 @@ mod tests {
         let server = thread::spawn(move || {
             for _ in 0..3 {
                 let (stream, _) = listener.accept().unwrap();
-                handle_request(stream, &root, file, port).unwrap();
+                handle_request(stream, &root, file, port, "fixture-test").unwrap();
             }
         });
         fn hit(port:u16,path:&str) -> String {

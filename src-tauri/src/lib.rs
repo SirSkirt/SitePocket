@@ -1,4 +1,5 @@
 mod icons;
+mod diagnostics;
 #[cfg(target_os = "android")]
 mod android_player;
 #[cfg(target_os = "android")]
@@ -14,6 +15,14 @@ struct AppListing {
     #[serde(flatten)]
     app: InstalledApp,
     icon_data: Option<String>,
+}
+#[tauri::command]
+fn get_debug_events(since: u64) -> Vec<diagnostics::Diagnostic> {
+    diagnostics::list(since)
+}
+#[tauri::command]
+fn clear_debug_events() {
+    diagnostics::clear();
 }
 #[tauri::command]
 fn list_apps() -> Result<Vec<AppListing>, String> {
@@ -111,7 +120,14 @@ fn runtime_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 fn launch_app(app: tauri::AppHandle, id: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
-    { return android_player::launch(app, id); }
+    {
+        let result = android_player::launch(app, id.clone());
+        if let Err(ref message) = result {
+            diagnostics::record(&id, "error", "runtime", "launch-failed",
+                "WebCask failed to launch the game", message);
+        }
+        return result;
+    }
     #[cfg(not(target_os = "android"))]
     {
     let installed = get_app(&id)?;
@@ -217,7 +233,8 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            list_apps, install_website, import_game, import_android_zip,
+            list_apps, get_debug_events, clear_debug_events,
+            install_website, import_game, import_android_zip,
             set_app_icon, detect_app_icon,
             set_game_focus, set_game_options, set_touch_controls,
             remove_app, launch_app, capture_app, create_shortcut

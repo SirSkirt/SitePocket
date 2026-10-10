@@ -184,3 +184,42 @@ remote assets and authentication cannot be magically included in a ZIP.
 SitePocket Android's launcher icon is generated from the **same original
 Windows icon** instead of the temporary Android placeholder. This ensures the
 app launcher uses consistent branding on both platforms.
+
+
+## Error-only WebCask debugger (Android alpha)
+
+The SitePocket debugger **stays hidden until an error is detected** in an
+Android game or its WebCask launch path. When this happens, a matching
+SitePocket-styled dialog appears, explaining the likely failing layer and
+showing recent diagnostic events. It includes **Copy Report**, **Clear Report**
+and **Close** controls. Dismissing the dialog suppresses previously acknowledged
+errors but future errors open it again.
+
+What it can observe:
+- Native WebCask launcher and Android WebView creation errors, navigation
+  start/finish events, local HTTP game-server startup.
+- JavaScript exceptions and unhandled promise rejections in the game's
+  **top-level page**; errors loading scripts, media, or other assets; missing
+  local JS/CSS/WASM/data files.
+- Optional browser Long Tasks (2-second threshold; warning only).
+- Startup watchdog: if **no DOM-content-loaded readiness signal arrives
+  within 22 seconds**, the debugger reports a **possible startup stall**.
+  This alone does **not** establish which component is at fault.
+
+A bounded history of the last 100 events is persisted in the app's private
+data directory so it is available after restarting SitePocket following a
+freeze. The manager polls the backend for new errors approximately every
+2.5 seconds. A completely frozen Android Activity cannot show a popup
+until the manager becomes responsive again or is restarted; Android process
+crashes can also prevent the final event from being recorded.
+
+The injected script uses a same-origin localhost reporting endpoint, NOT
+Tauri native commands. Requests are limited to 4 KiB and checked against
+the WebCask localhost origin. No personal files, cookies, or browser storage
+are collected by the debugger. Report text may nevertheless contain file names,
+error URLs or game stack traces, so review before sharing.
+
+Important limitations: page-origin JavaScript cannot observe errors from
+cross-origin frames, blocked scripts, hard Android WebView process crashes,
+or native Kotlin stack traces. The exact root cause still needs testing on
+a device; the error classification is guidance, not a verdict.
