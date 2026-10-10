@@ -3,7 +3,7 @@ SITEPOCKET + WEBCASK RUNTIME — PROJECT HANDOFF
 Updated: 2026-10-10 (native console ordering and instrumentation isolation)
 Repository: https://github.com/SirSkirt/SitePocket
 Branch: main
-Last implementation commit before this handoff update: 90b3b4ada86d4878a6129662f095ffeb2682bd4b
+Last implementation commit before this handoff update: c8c6eddb40fff26d01e54fe26be9dae544054e6a
 Status: Game View regression affects BOTH Windows and Android; shared
 Game View recovery patch and cross-platform CI tests pushed. Earlier
 Android Activity rotation patch and five Tauri/Wry bootstrap conflicts
@@ -145,6 +145,12 @@ We read:
   ALWAYS use regular 'Launch' to test Game View after enabling checkbox.
 
 SHARED SCRIPT ISSUES IDENTIFIED:
+- MORE FUNDAMENTAL: Game View attempted
+  new ResizeObserver(...).observe(document.documentElement) at
+  DOCUMENT-START without checking whether the HTML root exists. On Wry
+  WebView2/Android this may throw on null and prevent even registration
+  of the DOMContentLoaded init callback, making all Game View features
+  appear nonfunctional.
 - Old finder stopped after only 30 attempts (~33 seconds).
 - Old eligibility rejected candidates smaller than 240x150 CSS pixels.
 - Once canvas replaced, the original 30-attempt timer would not restart
@@ -166,14 +172,19 @@ CHANGES COMMITTED, RELEASE/DEVICE VALIDATION NOT YET CONFIRMED:
   more visible waiting status 'Waiting for game canvas · Pick'.
 - Avoids updateBadge/MutationObserver feedback loops by skipping identical
   text assignments; Toggle, Pick, hotkeys and original style restore kept.
+- Shared Game View now installs ResizeObserver and MutationObserver
+  only AFTER the document root/body are present in init(). Guarded by
+  try/catch; optional browser APIs cannot prevent Game View startup.
 - New no-dependency Node VM DOM tests in
   .github/scripts/check-webcask-game-focus.cjs:
-  immediate canvas, >30 late scans, replacement, manual Toggle, named root,
-  DOM-only game, small Android canvas.
+  document-start injection with NULL documentElement plus real
+  ResizeObserver and later DOMContentLoaded; immediate canvas, >30 late
+  scans, replacement, manual Toggle, named root, DOM-only game, small
+  Android canvas.
 - Both Windows and Android release workflows execute shared Game View tests.
 - README updated.
 LATEST IMPLEMENTATION COMMIT BEFORE THIS HANDOFF UPDATE:
-  90b3b4ada86d4878a6129662f095ffeb2682bd4b
+  c8c6eddb40fff26d01e54fe26be9dae544054e6a
 NEXT TEST:
 1. Verify both build/release workflows produced valid installer/APK (do
    NOT claim builds succeeded until confirmed). Install in place, preserve
