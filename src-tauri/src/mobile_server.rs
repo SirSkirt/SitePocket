@@ -127,6 +127,10 @@ fn handle_request(mut stream: TcpStream, root: &Path, index: &std::ffi::OsStr,
             "page-ready" => crate::diagnostics::ready(game_id, "page-ready"),
             "script-error" | "promise-error" => crate::diagnostics::record(game_id,
                 "error", "game", kind, message, detail),
+            // "Script error." with no source is a browser security-redacted
+            // exception, NOT evidence that the game's own code caused it.
+            "opaque-script-error" => crate::diagnostics::record(game_id,
+                "error", "unattributed", kind, message, detail),
             "resource-error" => crate::diagnostics::record(game_id,
                 "warning", "assets", kind, message, detail),
             "long-task" => crate::diagnostics::record(game_id,
