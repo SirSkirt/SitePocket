@@ -149,8 +149,10 @@ private class WebCaskConsoleClient(
                 Uri.parse(message.sourceId()).buildUpon().clearQuery()
                     .fragment(null).build().toString().take(200)
             } catch (_: Exception) { "unknown source" }
-            WebCaskNativeLog.write(activity, severity, "native-console-" + severity,
-                "WebView console " + severity,
+            val ownDiagnostics = message.message().startsWith("[WebCask diagnostics")
+            WebCaskNativeLog.write(activity, severity,
+                if (ownDiagnostics) "native-instrumentation-error" else "native-console-" + severity,
+                if (ownDiagnostics) "WebCask diagnostic script failed" else "WebView console " + severity,
                 "Line " + message.lineNumber() + " (" + location + "): " + message.message().take(600))
         }
         return previous.onConsoleMessage(message)
