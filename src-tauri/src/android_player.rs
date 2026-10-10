@@ -5,11 +5,14 @@ use webcask_core::AppKind;
 
 pub fn launch(app: AppHandle, id: String) -> Result<(), String> {
     let item = webcask_core::get_app(&id)?;
-    if !matches!(item.kind, AppKind::Online) {
-        return Err("Imported offline games aren't available in the Android player yet. Android currently supports online games; ZIP playback needs a mobile local-asset server.".into());
-    }
-    let address = item.url.as_deref().ok_or("Website URL missing")?;
-    let url = url::Url::parse(address).map_err(|e| e.to_string())?;
+    // WebCask Mobile serves imported games from a read-only localhost server,
+    // not file://, so fetch(), workers, ES modules and WASM MIME work.
+    // This loopback address remains available with airplane mode enabled.
+    let address = match &item.kind {
+        AppKind::Online => item.url.clone().ok_or("Website URL missing")?,
+        AppKind::Local => super::mobile_server::serve(&item)?,
+    };
+    let url = url::Url::parse(&address).map_err(|e| e.to_string())?;
     if !matches!(url.scheme(), "https" | "http") {
         return Err("Only HTTP(S) games can be launched.".into());
     }

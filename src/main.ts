@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { BaseDirectory, copyFile, mkdir, remove } from '@tauri-apps/plugin-fs';
 import './style.css';
 
 type WindowMode = 'windowed' | 'maximized' | 'fullscreen';
@@ -44,7 +45,7 @@ function clearFormMessage() {
   const target = document.querySelector<HTMLDivElement>('#form-feedback');
   if (target) {
     target.textContent = mode === 'game'
-      ? 'Import a folder or ZIP with an index.html file.'
+      ? (onAndroid ? 'Select an HTML5 game ZIP from your phone.' : 'Import a folder or ZIP with an index.html file.')
       : 'No PWA manifest required.';
     target.className = 'form-feedback';
   }
@@ -69,10 +70,10 @@ function render() {
     '<aside class="side"><div class="brand"><div class="logo">S</div><div><strong>SitePocket</strong><small>Powered by WebCask</small></div></div>' +
     '<nav><div class="nav selected">▦ &nbsp; My applications <span>' + itemCount + '</span></div>' +
     '<div class="section-title">INSTALLATION</div><button class="nav ' + (mode === 'website' ? 'selected' : '') + '" data-mode="website">◎ &nbsp; Website</button>' +
-    (onAndroid ? '' : '<button class="nav ' + (mode === 'game' ? 'selected' : '') + '" data-mode="game">▣ &nbsp; Offline game</button>') + '</nav>' +
+    '<button class="nav ' + (mode === 'game' ? 'selected' : '') + '" data-mode="game">▣ &nbsp; Offline game</button></nav>' +
     '<div class="side-foot"><span class="dot"></span> WebCask Runtime <small>v0.1.0 Alpha</small></div></aside>' +
     '<main><header><div><div class="eyebrow">APPLICATION LIBRARY</div><h1>Your web apps. <span>Your rules.</span></h1>' +
-    '<p>Turn websites and local HTML5 games into standalone desktop windows.</p></div><div class="version">ALPHA 0.1.0</div></header>' +
+    '<p>Run websites and HTML5 games with WebCask on your device.</p></div><div class="version">ALPHA 0.1.0</div></header>' +
     '<section class="install-card"><div class="install-heading"><div class="glyph">' + (mode === 'website' ? '◎' : '▣') + '</div><div>' +
     '<h2>' + (mode === 'website' ? 'Install a website' : 'Import an offline game') + '</h2><p>' +
     (mode === 'website' ? 'Give any website its own dedicated WebCask window.' : 'Bring your HTML, JavaScript or WebAssembly game as a folder or ZIP.') +
@@ -80,17 +81,22 @@ function render() {
     (mode === 'website' ? 'e.g. YouTube Music' : 'e.g. My Game') + '" value="' + escapeHtml(draftName) + '" maxlength="80" required /></label>' +
     (mode === 'website' ?
     '<label>WEBSITE ADDRESS<input id="address" type="url" placeholder="https://example.com" value="' + escapeHtml(draftUrl) + '" required /></label>' :
-    '<label>GAME SOURCE<div class="picker"><span id="path-label">' + (selectedPath ? escapeHtml(selectedPath) : 'No folder or ZIP selected') +
-    '</span><button type="button" class="secondary" id="pick-folder">Folder</button><button type="button" class="secondary" id="pick-zip">ZIP</button></div></label>') +
+    '<label>GAME SOURCE<div class="picker"><span id="path-label">' +
+    (selectedPath ? (onAndroid ? 'Android ZIP selected' : escapeHtml(selectedPath)) : 'No game selected') +
+    '</span>' + (onAndroid ? '' : '<button type="button" class="secondary" id="pick-folder">Folder</button>') +
+    '<button type="button" class="secondary" id="pick-zip">' + (onAndroid ? 'Choose ZIP' : 'ZIP') +
+    '</button></div></label>') +
     '</div><div class="form-foot"><div id="form-feedback" role="status" aria-live="polite" class="form-feedback ' +
     (feedback ? feedback.kind : '') + '">' + escapeHtml(feedback?.message ||
-    (mode === 'game' ? 'Import a folder or ZIP with an index.html file.' : 'No PWA manifest required.')) +
+    (mode === 'game' ? (onAndroid ? 'Select an HTML5 game ZIP from your phone.' :
+    'Import a folder or ZIP with an index.html file.') : 'No PWA manifest required.')) +
     '</div><button id="install-button" class="primary" type="submit" ' + (busy ? 'disabled' : '') + '>' +
     (busy ? 'Installing…' : mode === 'website' ? '＋ Install website' : '＋ Import game') + '</button></div></form></section>' +
     '<section class="library-head"><div><div class="eyebrow">READY TO LAUNCH</div><h2>Installed applications <span>' + itemCount + '</span></h2></div><button class="secondary" id="refresh-list">↻ Refresh library</button></section>' +
     '<div class="library">' + (itemCount ? apps.map(renderApp).join('') :
     '<div class="empty"><div class="empty-icon">▦</div><h3>Nothing in your pocket yet</h3><p>Install your first site or import a game to get started.</p></div>') +
-    '</div><footer>SitePocket manages your apps · WebCask runs them independently · Windows Alpha</footer></main></div>' +
+    '</div><footer>SitePocket manages your apps · WebCask runs them independently · ' +
+    (onAndroid ? 'Android Preview' : 'Windows Alpha') + '</footer></main></div>' +
     renderOptions() + renderTouchEditor() + '<div id="toast" class="toast"></div>';
   document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => button.onclick = () => {
     mode = button.dataset.mode as Mode;
@@ -460,7 +466,7 @@ async function pick(folder: boolean) {
     if (typeof result === 'string' && result.trim()) {
       selectedPath = result;
       const label = document.getElementById('path-label');
-      if (label) label.textContent = result;
+      if (label) label.textContent = onAndroid ? 'ZIP chosen from Android Files' : result;
       formMessage('info', (folder ? 'Folder' : 'ZIP') + ' selected. Ready to import.');
     } else if (!selectedPath) {
       formMessage('info', 'No game selected. Choose Folder or ZIP.');
@@ -477,7 +483,9 @@ async function submitInstall(ev: Event) {
   const address = (document.getElementById('address') as HTMLInputElement | null)?.value.trim();
   draftName = name; draftUrl = address || '';
   if (currentMode === 'game' && !selectedPath) {
-    formMessage('error', 'Choose a folder or ZIP containing the exported game files first.');
+    formMessage('error', onAndroid
+      ? 'Choose an exported HTML5 ZIP from your phone first.'
+      : 'Choose a folder or ZIP containing the exported game files first.');
     return;
   }
   if (!name) {
@@ -494,8 +502,39 @@ async function submitInstall(ev: Event) {
     ? 'Checking the game files and importing… This can take a moment for large ZIPs.'
     : 'Installing the web application…');
   try {
-    const result = await invoke<InstalledApp>(currentMode === 'website' ? 'install_website' : 'import_game',
-      currentMode === 'website' ? { name, url: address } : { name, path: selectedPath });
+    let result: InstalledApp;
+    if (currentMode === 'game' && onAndroid) {
+      // Android Files returns a content:// URI, not a Rust filesystem path.
+      // Use the Android-compatible FS plugin to stage the archive privately.
+      // Never pass arbitrary caller-supplied file paths to the import command.
+      const token = crypto.randomUUID();
+      const relative = 'mobile-imports/' + token + '.zip';
+      let staged = false;
+      try {
+        formMessage('info', 'Copying the ZIP into SitePocket’s private storage…');
+        await mkdir('mobile-imports', { baseDir: BaseDirectory.AppLocalData, recursive: true });
+        try {
+          await copyFile(selectedPath, relative, { toPathBaseDir: BaseDirectory.AppLocalData });
+        } catch (error) {
+          throw new Error('Android could not read the selected ZIP. Try moving it to Downloads and choose it again. ' +
+            errorText(error));
+        }
+        staged = true;
+        formMessage('info', 'Extracting the HTML5 game and checking its index.html…');
+        result = await invoke<InstalledApp>('import_android_zip', { name, token });
+      } finally {
+        // Rust also removes staging on success/failure; this covers an early
+        // copy error and does not touch the original Android document.
+        if (staged) {
+          try { await remove(relative, { baseDir: BaseDirectory.AppLocalData }); } catch (_) {}
+        }
+      }
+    } else {
+      result = await invoke<InstalledApp>(
+        currentMode === 'website' ? 'install_website' : 'import_game',
+        currentMode === 'website' ? { name, url: address } : { name, path: selectedPath }
+      );
+    }
     selectedPath = ''; draftName = ''; draftUrl = '';
     await refresh();
     formMessage('success', currentMode === 'game'

@@ -126,11 +126,26 @@ The configuration persists across launches in the Rust registry.
 require trusted hardware keys or run in cross-origin embedded frames may ignore
 them. Full native keyboard emulation is not yet implemented.
 
-**Initial Android limitations:** Online websites only. Offline ZIP/folder
-import, browser-game capture and Windows-style desktop shortcuts are not yet
-supported on Android. Tauri Android WebView depends on the device's installed
-system WebView provider. Builds are debug-signed for sideload testing, not
-production or Google Play signing.
+**Android offline ZIP games:** Open Offline Game in SitePocket, select
+**Choose ZIP**, pick an HTML5/JavaScript/WASM ZIP using Android Files, and tap
+**Import game**. The selected `content://` document is staged into private
+app storage (the original ZIP is untouched), extracted with the same bounded
+Rust importer as Windows, and appears in the library. Launch it through a
+read-only `127.0.0.1` local asset server. It supports game-relative and
+absolute asset paths, correct WASM content types, and runs without internet
+provided every game resource is inside the ZIP. Imported games get the same
+per-game editable touchscreen keyboard mappings.
+
+**Android limitations:** The Android folder picker is unsupported; use ZIP.
+Some games still need an online API, DRM check, external assets, or server,
+and will not play fully offline. The local server does not yet implement
+HTTP Range requests, which some media-heavy games require. Imported files
+are not automatically transferred from Windows installs; import the ZIP on
+Android. Browser-game capture and Windows-style desktop shortcuts are not
+supported on Android. Android WebView compatibility varies with the installed
+system provider. Android's Network Security Configuration enables cleartext
+HTTP **only to localhost**, not arbitrary external sites.
+Builds are debug-signed for sideload testing, not Google Play signing.
 
 Build on Linux with JDK17, Android SDK/NDK, Rust Android target, Node22:
 

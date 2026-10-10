@@ -54,6 +54,36 @@ jobs:
         run: npx tauri icon src-tauri/icons/icon.png
       - name: Initialize Android application
         run: npx tauri android init --ci
+      - name: Permit only localhost HTTP for imported offline games
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          android = 'http://schemas.android.com/apk/res/android'
+          manifest = Path('src-tauri/gen/android/app/src/main/AndroidManifest.xml')
+          if not manifest.is_file():
+              raise SystemExit('Android manifest was not generated')
+          ET.register_namespace('android', android)
+          tree = ET.parse(manifest)
+          app = tree.getroot().find('application')
+          if app is None:
+              raise SystemExit('Android application element missing')
+          app.set(f'{{{android}}}networkSecurityConfig', '@xml/webcask_network_security')
+          tree.write(manifest, encoding='utf-8', xml_declaration=True)
+          config = manifest.parent / 'res' / 'xml' / 'webcask_network_security.xml'
+          config.parent.mkdir(parents=True, exist_ok=True)
+          config.write_text('''<?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+            <base-config cleartextTrafficPermitted="false" />
+            <domain-config cleartextTrafficPermitted="true">
+              <domain>127.0.0.1</domain>
+              <domain>localhost</domain>
+            </domain-config>
+          </network-security-config>
+          ''', encoding='utf-8')
+          print('Configured local-only HTTP for offline HTML5 games')
+          PY
       - name: Build installable debug-signed APK
         run: npx tauri android build --apk --debug --target aarch64
       - name: Verify APK output
@@ -78,7 +108,7 @@ jobs:
           body: |
             Early Android arm64 preview, Android 12L/API32+.
             Debug-signed installable APK for manual testing, not a production release.
-            Online website/game launching in a separate Android system WebView.
+            Online websites and offline ZIP-imported HTML5 games in Android WebView.
             Per-game drag-to-position multi-touch keyboard layouts.
-            Android offline ZIP import, auto capture and native shortcuts not yet supported.
+            Offline ZIP picker/import supported. Folder picker, automatic online-game capture and native shortcuts not supported.
             KeyboardEvents are synthetic and some games may ignore them.
