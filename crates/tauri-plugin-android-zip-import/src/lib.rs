@@ -5,7 +5,8 @@ use tauri::{plugin::{Builder, TauriPlugin}, Runtime};
 #[cfg(target_os = "android")]
 use tauri::{plugin::PluginHandle, Manager};
 #[cfg(target_os = "android")]
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 #[cfg(target_os = "android")]
 pub struct ZipBridge<R: Runtime>(PluginHandle<R>);
@@ -54,8 +55,11 @@ pub fn stage_zip<R: Runtime>(app: &tauri::AppHandle<R>, uri: String)
 }
 
 
-#[cfg(target_os = "android")]
+// Keep the Rust/Kotlin bridge field contract stable on ALL host platforms
+// so CI can test it without running Android. Kotlin ActiveGameArgs.appId
+// requires JSON `appId`, never Rust's snake_case `app_id`.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ActiveGameRequest { app_id: String }
 #[cfg(target_os = "android")]
 #[derive(Serialize)]
@@ -96,4 +100,23 @@ pub fn clear_native_events<R: Runtime>(app: &tauri::AppHandle<R>)
         .run_mobile_plugin("clearNativeEvents", EmptyRequest {})
         .map_err(|e| format!("Native WebView clear failed: {e}"))?;
     if ack.ok { Ok(()) } else { Err("Native WebView clear rejected".into()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ActiveGameRequest;
+
+    #[test]
+    fn active_game_wire_name_matches_kotlin_app_id() {
+        let serialized = serde_json::to_value(ActiveGameRequest {
+            app_id: "123e4567-e89b-12d3-a456-426614174000".to_owned(),
+        }).unwrap();
+        assert_eq!(
+            serialized.get("appId").and_then(|v| v.as_str()),
+            Some("123e4567-e89b-12d3-a456-426614174000"),
+            "Kotlin @InvokeArg ActiveGameArgs.appId must be initialized"
+        );
+        assert!(serialized.get("app_id").is_none(),
+            "Never emit the Rust field name to the Android plugin");
+    }
 }
