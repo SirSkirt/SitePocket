@@ -76,6 +76,11 @@ class WebCaskActivity : TauriActivity() {
                 priorRenderer?.onRenderProcessResponsive(view, renderer)
             }
         }
+        // Wry installs (and sometimes replaces) its WebChromeClient AFTER
+        // onWebViewCreate returns. Do not wait 100ms and miss the first page.
+        // The Rust launcher begins at about:blank and will NOT navigate to
+        // game code until it sees our native-console-hook-installed journal
+        // event from this Activity. Preserve/delegate Wry's original client.
         var lastProgressBucket = -1
         val observer = object : Runnable {
             override fun run() {
@@ -84,7 +89,8 @@ class WebCaskActivity : TauriActivity() {
                 if (current != null && current !is WebCaskConsoleClient) {
                     webView.webChromeClient = WebCaskConsoleClient(current, this@WebCaskActivity)
                     WebCaskNativeLog.write(this@WebCaskActivity, "info",
-                        "native-console-hook-installed", "Native console logger attached")
+                        "native-console-hook-installed", "Native console logger attached",
+                        "Installed before WebCask navigates to the game URL.")
                 }
                 val bucket = webView.progress / 25
                 if (bucket != lastProgressBucket) {
@@ -93,10 +99,13 @@ class WebCaskActivity : TauriActivity() {
                         "native-webview-progress", "WebView loading progress",
                         "Progress: " + webView.progress + "%")
                 }
-                webView.postDelayed(this, 1750)
+                // Fast until Wry has installed its client; keep a slow
+                // replacement guard for subsequent Activity/WebView changes.
+                webView.postDelayed(this,
+                    if (webView.webChromeClient is WebCaskConsoleClient) 750 else 16)
             }
         }
-        webView.postDelayed(observer, 100)
+        webView.post(observer)
     }
 
     override fun onResume() {
