@@ -44,7 +44,15 @@ pub fn launch(app: AppHandle, id: String) -> Result<(), String> {
                 PageLoadEvent::Finished => "webview-navigation-finished",
             };
             crate::diagnostics::record(&launch_id, "info", "runtime", phase,
-                "WebView navigation event", &payload.url().to_string());
+                "WebView navigation event",
+                payload.url().to_string().split(['?', '#']).next().unwrap_or(""));
+            // A finished navigation is itself evidence that Android rendered
+            // the page, even if ContentResolver / script injection is blocked.
+            // Mark it ready so the watchdog doesn't falsely flag a healthy
+            // online site or a game whose injected JS is disabled.
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                crate::diagnostics::ready(&launch_id, "webview-navigation-ready");
+            }
         })
         .initialization_script(script);
     if let Some(js) = debug_script {

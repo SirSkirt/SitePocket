@@ -45,7 +45,26 @@ fn state() -> &'static Mutex<State> {
             .and_then(|data| serde_json::from_slice::<Vec<Diagnostic>>(&data).ok())
             .unwrap_or_default();
         let current_id = history.iter().map(|event| event.id).max().unwrap_or(0);
-        Mutex::new(State { history, current_id, started: HashMap::new() })
+        let mut restored = State { history, current_id, started: HashMap::new() };
+        // This runs once per process, so an interrupted launch from a
+        // previous process can be reported even if Android killed the app
+        // before the watchdog thread had time to fire.
+        let mut last_seen = HashMap::<String, Diagnostic>::new();
+        for event in &restored.history {
+            last_seen.insert(event.app_id.clone(), event.clone());
+        }
+        for (app_id, event) in last_seen {
+            if matches!(event.code.as_str(),
+                "launch-started" | "server-started" |
+                "webview-created" | "webview-navigation-started") &&
+                now().saturating_sub(event.time) > 5000 {
+                push(&mut restored, &app_id, "error", "runtime",
+                    "previous-launch-interrupted",
+                    "Previous WebCask launch ended before the game was ready",
+                    "Android may have interrupted the player or SitePocket process. This is a possible freeze, not proof the game code failed. Review the preceding startup stages.");
+            }
+        }
+        Mutex::new(restored)
     })
 }
 fn limit(s: impl AsRef<str>, max: usize) -> String {
