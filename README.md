@@ -315,3 +315,27 @@ The release CI runs `node .github/scripts/check-webcask-diagnostics.cjs` to
 regression-test source-less error classification and guard behavior.
 Physical-device A/B results are still needed to prove what caused the
 original five anonymous errors.
+
+### Android native logger identity fix (October 10, 2026)
+
+An S25 Ultra native-only launch report showed the native
+`native-console-hook-installed` event on time, followed by a
+`native-console-hook-timeout`. The real root cause was the Android bridge:
+Rust serialized `ActiveGameRequest.app_id` as `app_id`, but Kotlin's
+`ActiveGameArgs` expects `appId`. Kotlin threw an uninitialized-property
+error, did not persist the game's UUID, and every subsequent native journal
+event therefore lacked the identity required by Rust's confirmation gate.
+
+Rust now serializes `appId` explicitly using serde camelCase. Kotlin rejects
+missing/blank game IDs with a readable error instead of an uninitialized
+property exception. Game launch now fails immediately and clearly if native
+identity setup fails, rather than waiting seven seconds for a hook that has
+already attached. The `active_game_wire_name_matches_kotlin_app_id` Rust
+unit test and both workflows' JavaScript contract assertion guard this
+boundary. The Windows workflow explicitly executes
+`cargo test -p tauri-plugin-android-zip-import`.
+
+This fix does NOT establish the origin of the original anonymous
+`Script error.` entries. A new APK still requires CI verification and
+physical-phone testing; the existing native-only A/B option remains the
+right comparison once startup works again.
