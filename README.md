@@ -128,13 +128,26 @@ them. Full native keyboard emulation is not yet implemented.
 
 **Android offline ZIP games:** Open Offline Game in SitePocket, select
 **Choose ZIP**, pick an HTML5/JavaScript/WASM ZIP using Android Files, and tap
-**Import game**. The selected `content://` document is staged into private
-app storage (the original ZIP is untouched), extracted with the same bounded
+**Import game**. The selected `content://` document is copied using the native Android
+ContentResolver into app-private cache (the original ZIP is untouched), extracted with the same bounded
 Rust importer as Windows, and appears in the library. Launch it through a
 read-only `127.0.0.1` local asset server. It supports game-relative and
 absolute asset paths, correct WASM content types, and runs without internet
 provided every game resource is inside the ZIP. Imported games get the same
 per-game editable touchscreen keyboard mappings.
+
+**Updating Android previews:** Starting with the new Android preview signer,
+GitHub Actions will use a single development-only signing certificate and
+an increasing Android `versionCode` for each workflow run. APKs signed with
+that same certificate can install directly over older *fixed-signer* builds,
+without removing imported games or settings. **One uninstall is required to
+switch from previews 1–6**, because those used different ephemeral GitHub
+runner signing certificates. Export or preserve any local game ZIPs before
+that initial uninstall; Android app data will be erased. The preview signing
+key is included solely for reproducible **non-production testing**. Because
+this key is stored in source control, it is **not secure for production
+distribution**; replace it with a privately held release key using GitHub
+encrypted secrets before any public/Play Store release.
 
 **Android limitations:** The Android folder picker is unsupported; use ZIP.
 Some games still need an online API, DRM check, external assets, or server,
@@ -155,3 +168,19 @@ Build on Linux with JDK17, Android SDK/NDK, Rust Android target, Node22:
     npx tauri android build --apk --debug --target aarch64
 
 Windows and Android pipelines publish independent alpha/preview artifacts.
+
+### Mobile ZIP troubleshooting
+
+If Android Files supplies a `content://` URI (e.g. Downloads), SitePocket
+uses an Android-only Kotlin plugin to call `ContentResolver.openInputStream`.
+This is required because Tauri filesystem calls do not accept those document
+URIs as real paths. The import is limited to 1 GiB compressed and reuses the
+Windows archive validation (ZIP slip/bomb guards and `index.html` detection).
+If an Android provider revokes access, reselect the ZIP from Android Files.
+Android downloads and cloud providers may require the document to be locally
+available before importing. Offline playback works for self-contained games;
+remote assets and authentication cannot be magically included in a ZIP.
+
+SitePocket Android's launcher icon is generated from the **same original
+Windows icon** instead of the temporary Android placeholder. This ensures the
+app launcher uses consistent branding on both platforms.

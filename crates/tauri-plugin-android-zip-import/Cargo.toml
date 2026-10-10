@@ -1,0 +1,16 @@
+[package]
+name = "tauri-plugin-android-zip-import"
+version = "0.1.0"
+edition = "2021"
+links = "tauri-plugin-android-zip-import"
+description = "Android ContentResolver bridge for SitePocket offline ZIP imports"
+
+[lib]
+name = "tauri_plugin_android_zip_import"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+tauri = "2"
+serde = { version = "1", features = ["derive"] }

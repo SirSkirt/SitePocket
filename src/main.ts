@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { BaseDirectory, copyFile, mkdir, remove } from '@tauri-apps/plugin-fs';
 import './style.css';
 
 type WindowMode = 'windowed' | 'maximized' | 'fullscreen';
@@ -504,31 +503,12 @@ async function submitInstall(ev: Event) {
   try {
     let result: InstalledApp;
     if (currentMode === 'game' && onAndroid) {
-      // Android Files returns a content:// URI, not a Rust filesystem path.
-      // Use the Android-compatible FS plugin to stage the archive privately.
-      // Never pass arbitrary caller-supplied file paths to the import command.
-      const token = crypto.randomUUID();
-      const relative = 'mobile-imports/' + token + '.zip';
-      let staged = false;
-      try {
-        formMessage('info', 'Copying the ZIP into SitePocket’s private storage…');
-        await mkdir('mobile-imports', { baseDir: BaseDirectory.AppLocalData, recursive: true });
-        try {
-          await copyFile(selectedPath, relative, { toPathBaseDir: BaseDirectory.AppLocalData });
-        } catch (error) {
-          throw new Error('Android could not read the selected ZIP. Try moving it to Downloads and choose it again. ' +
-            errorText(error));
-        }
-        staged = true;
-        formMessage('info', 'Extracting the HTML5 game and checking its index.html…');
-        result = await invoke<InstalledApp>('import_android_zip', { name, token });
-      } finally {
-        // Rust also removes staging on success/failure; this covers an early
-        // copy error and does not touch the original Android document.
-        if (staged) {
-          try { await remove(relative, { baseDir: BaseDirectory.AppLocalData }); } catch (_) {}
-        }
-      }
+      // Android Files provides a content:// document; the native Kotlin
+      // bridge reads it through ContentResolver and stages a private ZIP.
+      formMessage('info', 'Reading the ZIP from Android Files, then extracting the game…');
+      result = await invoke<InstalledApp>('import_android_zip', {
+        name, uri: selectedPath,
+      });
     } else {
       result = await invoke<InstalledApp>(
         currentMode === 'website' ? 'install_website' : 'import_game',

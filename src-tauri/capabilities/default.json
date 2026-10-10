@@ -7,20 +7,6 @@
   ],
   "permissions": [
     "core:default",
-    "dialog:allow-open",
-    "fs:allow-copy-file",
-    "fs:allow-mkdir",
-    "fs:allow-remove",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        {
-          "path": "$APPLOCALDATA/mobile-imports/**"
-        },
-        {
-          "path": "$APPLOCALDATA/mobile-imports"
-        }
-      ]
-    }
+    "dialog:allow-open"
   ]
 }

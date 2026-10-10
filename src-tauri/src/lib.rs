@@ -39,38 +39,32 @@ async fn import_game(name: String, path: String) -> Result<InstalledApp, String>
         Ok(app)
     }).await.map_err(|e| format!("Game import task failed: {e}"))?
 }
-/// Android picker returns content:// URIs. The frontend copies the selected
-/// ZIP to $APPLOCALDATA/mobile-imports/<uuid>.zip through tauri-plugin-fs.
-/// Only that generated UUID is passed to Rust; arbitrary file paths are rejected.
+/// Android Files returns a content:// document. A restricted native Kotlin
+/// bridge copies it into private cache using Android's ContentResolver.
 #[tauri::command]
-async fn import_android_zip(name: String, token: String) -> Result<InstalledApp, String> {
+async fn import_android_zip(name: String, uri: String, app: tauri::AppHandle)
+    -> Result<InstalledApp, String> {
     #[cfg(target_os = "android")]
     {
-        let token = uuid::Uuid::parse_str(&token)
-            .map_err(|_| "Invalid mobile ZIP transfer token")?.to_string();
         return tauri::async_runtime::spawn_blocking(move || {
-            let archive = webcask_core::root()?.join("mobile-imports").join(format!("{token}.zip"));
+            let archive = tauri_plugin_android_zip_import::stage_zip(&app, uri)?;
             let result = (|| {
                 let metadata = std::fs::metadata(&archive)
-                    .map_err(|e| format!("Can't open the selected ZIP. Please select it again: {e}"))?;
-                if !metadata.is_file() || metadata.len() == 0 {
-                    return Err("The selected ZIP is empty or unavailable.".into());
+                    .map_err(|e| format!("The selected ZIP is unavailable: {e}"))?;
+                if metadata.len() == 0 || metadata.len() > 1024 * 1024 * 1024 {
+                    return Err("Select a nonempty HTML5 game ZIP smaller than 1 GiB.".into());
                 }
-                if metadata.len() > 1024 * 1024 * 1024 {
-                    return Err("The ZIP exceeds the Android import limit of 1 GiB.".into());
-                }
-                let imported = webcask_core::import_game(&name, &archive)?;
-                let _ = icons::detect_local_icon(&imported);
-                Ok(imported)
+                let installed = webcask_core::import_game(&name, &archive)?;
+                let _ = icons::detect_local_icon(&installed);
+                Ok(installed)
             })();
-            // Clean up staging on both success and failure, preserving original document.
-            let _ = std::fs::remove_file(archive);
+            let _ = std::fs::remove_file(&archive);
             result
         }).await.map_err(|e| format!("Android ZIP import task failed: {e}"))?;
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (name, token);
+        let _ = (name, uri, app);
         Err("Android ZIP import is only available on mobile.".into())
     }
 }
@@ -209,7 +203,9 @@ fn set_touch_controls(id: String, enabled: bool, buttons: Vec<webcask_core::Touc
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_fs::init());
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_android_zip_import::init());
     builder.setup(|app| {
             #[cfg(target_os = "android")]
             {
