@@ -42,12 +42,18 @@ pub fn launch(app: AppHandle, id: String, native_only: bool) -> Result<(), Strin
     // activity on multi-window capable devices (API 32+).
     let main = app.get_webview_window("main")
         .ok_or("SitePocket's main Android window is unavailable")?;
-    // Tie native Kotlin lifecycle events to the launching game before
-    // requesting the secondary Activity. Errors here do not prevent launch.
+    // A correctly tagged native journal is REQUIRED before we load game code.
+    // Fail immediately if Rust/Kotlin cannot agree on the game's UUID.
+    // Otherwise the console hook may attach but the 7s readiness gate can
+    // never find a journal event with a matching appId.
     if let Err(error) = tauri_plugin_android_zip_import::set_active_game(&app, &item.id) {
-        crate::diagnostics::record(&item.id, "warning", "native-webview",
+        crate::diagnostics::record(&item.id, "error", "native-webview",
             "native-logger-setup-failed", "Could not initialize native WebView logger", &error);
+        return Err(format!("Native WebView logger setup failed before launch: {error}"));
     }
+    crate::diagnostics::record(&item.id, "info", "native-webview",
+        "native-logger-game-id-ready", "Native logger game identity confirmed",
+        "The Kotlin logger accepted this game's UUID before Activity creation.");
     crate::diagnostics::begin(&item.id);
     crate::diagnostics::record(&item.id, "info", "runtime",
         "injection-mode", "WebCask page instrumentation mode",
