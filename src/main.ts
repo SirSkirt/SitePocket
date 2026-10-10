@@ -595,6 +595,8 @@ function debugDiagnosis(event: DebugEvent): string {
     return 'A script failed without a filename, line or stack. Its source is unknown. Compare a normal launch with Launch native-only.';
   if (event.code === 'native-instrumentation-error')
     return 'WebCask detected its own diagnostic JavaScript failing. This is an instrumentation issue, not a confirmed game defect.';
+  if (event.code === 'native-tauri-injection-conflict')
+    return 'Tauri/Wry initialization attempted to redefine an existing JavaScript property. This is a launcher framework error, not a confirmed BlockBend error. Native-only mode still contains Tauri bootstrap scripts.';
   if (event.code === 'native-console-error')
     return 'Android captured a WebView console error through its native WebChromeClient, even if WebCask JavaScript diagnostics could not start.';
   if (event.code === 'startup-timeout')
