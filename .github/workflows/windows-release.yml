@@ -40,6 +40,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Test WebCask page diagnostics for false attribution
         run: node .github/scripts/check-webcask-diagnostics.cjs
+      - name: Test shared Game View canvas detection and recovery
+        run: node .github/scripts/check-webcask-game-focus.cjs
       - name: Build NSIS setup
         run: npm run tauri build -- --bundles nsis
       - name: Upload Windows installer
