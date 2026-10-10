@@ -3,11 +3,11 @@ SITEPOCKET + WEBCASK RUNTIME — PROJECT HANDOFF
 Updated: 2026-10-10 (native console ordering and instrumentation isolation)
 Repository: https://github.com/SirSkirt/SitePocket
 Branch: main
-Last implementation commit before this handoff update: c525083eff0704ad760d5ba3232857c1a5e4134a
-Status: Native-only BlockBend now reaches page-ready after fixed Rust/Kotlin
-appId bridge; five Tauri/Wry property-definition exceptions identified.
-Rotation causes WebCaskActivity recreation and black screen; manifest
-configChanges + same-WebView redraw patch on main, pending CI and phone test.
+Last implementation commit before this handoff update: 90b3b4ada86d4878a6129662f095ffeb2682bd4b
+Status: Game View regression affects BOTH Windows and Android; shared
+Game View recovery patch and cross-platform CI tests pushed. Earlier
+Android Activity rotation patch and five Tauri/Wry bootstrap conflicts
+remain separate. CI builds and device tests after latest patch UNVERIFIED.
 
 LATEST PHONE REPORT — 2026-10-10 20:22 UTC (NATIVE-ONLY)
 ------------------------------------------------------
@@ -129,6 +129,67 @@ NEXT TEST:
   native-tauri-injection-conflict; if impactful, investigate Wry Android
   injection and consider an independent raw Android WebView game runner.
 - Verify CI and device behavior; source patch alone is not proof of success.
+
+LATEST USER REPORT — GAME VIEW REGRESSION ON PC **AND** ANDROID
+--------------------------------------------------------------
+User states Game View used to focus the game window and no longer works,
+on BOTH Windows PC and Android. This is NOT specific to Android
+orientation/Activity changes: shared script was the priority.
+We read:
+- crates/webcask-runtime/src/game_focus.js (same JavaScript used on Windows
+  via Wry with_initialization_script_for_main_only, Android via Tauri
+  builder.initialization_script when gameFocus && !native_only).
+- src/main.ts Game Options persists checkbox via set_game_options.
+- webcask-core save/load persists game_focus; frontend camelCase binding.
+- IMPORTANT: Android 'Launch native-only' disables game focus on purpose.
+  ALWAYS use regular 'Launch' to test Game View after enabling checkbox.
+
+SHARED SCRIPT ISSUES IDENTIFIED:
+- Old finder stopped after only 30 attempts (~33 seconds).
+- Old eligibility rejected candidates smaller than 240x150 CSS pixels.
+- Once canvas replaced, the original 30-attempt timer would not restart
+  discovery; game engine can dynamically rebuild or resize its canvas.
+- Old behavior selected only raw canvas/iframe even when game HTML HUD/menu
+  shared a dedicated wrapper, hiding associated controls unintentionally.
+- No visible waiting state explaining why Game View failed to locate canvas.
+These are plausible shared causes; exact user-specific root cause is not
+proven yet without a new build and observations.
+
+CHANGES COMMITTED, RELEASE/DEVICE VALIDATION NOT YET CONFIRMED:
+- game_focus.js now searches continuously (low-frequency 900ms fallback)
+  and via MutationObserver on dynamic DOM changes.
+- Recovers when a game removes/replaces its rendering surface.
+- Supports canvases >=120x80 CSS pixels and explicit named game
+  container elements as fallback; prefers game-root wrapper around renderer
+  to keep HUD and menus together.
+- Badge moved top LEFT (avoids Android touch control toggle at top right);
+  more visible waiting status 'Waiting for game canvas · Pick'.
+- Avoids updateBadge/MutationObserver feedback loops by skipping identical
+  text assignments; Toggle, Pick, hotkeys and original style restore kept.
+- New no-dependency Node VM DOM tests in
+  .github/scripts/check-webcask-game-focus.cjs:
+  immediate canvas, >30 late scans, replacement, manual Toggle, named root,
+  DOM-only game, small Android canvas.
+- Both Windows and Android release workflows execute shared Game View tests.
+- README updated.
+LATEST IMPLEMENTATION COMMIT BEFORE THIS HANDOFF UPDATE:
+  90b3b4ada86d4878a6129662f095ffeb2682bd4b
+NEXT TEST:
+1. Verify both build/release workflows produced valid installer/APK (do
+   NOT claim builds succeeded until confirmed). Install in place, preserve
+   installed apps and game saves; Android signer unchanged.
+2. In Game Options enable 'Launch in Game View' and SAVE, then NORMAL Launch
+   (not 'Launch native-only').
+3. Expect a top-left Game View badge. If it says 'Waiting for game canvas'
+   for more than a few seconds, try manual Pick; report DOM/canvas status.
+4. If badge absent, investigate if the persistent gameFocus flag was
+   saved and if Wry/Tauri initialization_script was injected at all.
+5. Toggle Website View and Game View; verify HUD, input and aspect ratio,
+   game handles resize and orientation. Compare PC and Android.
+6. If CI tests fail, inspect Node test or actual engine and fix; source
+   patch is NOT evidence of working app.
+7. Existing five Tauri property-redefinition errors in Android native
+   console remain an independent framework issue, not game renderer.
 
 READ THIS FIRST (FOR THE NEXT CHAT / DEVELOPER)
 ------------------------------------------------
