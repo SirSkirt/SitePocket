@@ -86,7 +86,12 @@ class WebCaskActivity : TauriActivity() {
             override fun run() {
                 if (!alive) return
                 val current = webView.webChromeClient
-                if (current != null && current !is WebCaskConsoleClient) {
+                // Do not acknowledge capture on the WebView's placeholder
+                // client: Wry replaces it with RustWebChromeClient during
+                // setup. Only wrapping Wry's real client guarantees that
+                // a later replacement won't silently drop early messages.
+                if (current != null && current !is WebCaskConsoleClient &&
+                    current.javaClass.name.contains("RustWebChromeClient")) {
                     webView.webChromeClient = WebCaskConsoleClient(current, this@WebCaskActivity)
                     WebCaskNativeLog.write(this@WebCaskActivity, "info",
                         "native-console-hook-installed", "Native console logger attached",
@@ -150,7 +155,7 @@ private class WebCaskConsoleClient(
                     .fragment(null).build().toString().take(200)
             } catch (_: Exception) { "unknown source" }
             val ownDiagnostics = message.message().startsWith("[WebCask diagnostics")
-            WebCaskNativeLog.write(activity, severity,
+            WebCaskNativeLog.write(activity, if (ownDiagnostics) "error" else severity,
                 if (ownDiagnostics) "native-instrumentation-error" else "native-console-" + severity,
                 if (ownDiagnostics) "WebCask diagnostic script failed" else "WebView console " + severity,
                 "Line " + message.lineNumber() + " (" + location + "): " + message.message().take(600))
