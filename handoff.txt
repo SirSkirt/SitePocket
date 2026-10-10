@@ -3,11 +3,11 @@ SITEPOCKET + WEBCASK RUNTIME — PROJECT HANDOFF
 Updated: 2026-10-10 (native console ordering and instrumentation isolation)
 Repository: https://github.com/SirSkirt/SitePocket
 Branch: main
-Last implementation commit before this handoff update: 8610f02df1184e12382d36e63cbf66e39092cbdf
-Status: Native-only Android console-hook gate blocked game launch because Rust
-used app_id while Kotlin required appId. Bridge root cause identified and fixed
-in main; updated APK/CI and device re-test still UNVERIFIED. Earlier
-opaque script errors remain unattributed.
+Last implementation commit before this handoff update: c525083eff0704ad760d5ba3232857c1a5e4134a
+Status: Native-only BlockBend now reaches page-ready after fixed Rust/Kotlin
+appId bridge; five Tauri/Wry property-definition exceptions identified.
+Rotation causes WebCaskActivity recreation and black screen; manifest
+configChanges + same-WebView redraw patch on main, pending CI and phone test.
 
 LATEST PHONE REPORT — 2026-10-10 20:22 UTC (NATIVE-ONLY)
 ------------------------------------------------------
@@ -60,6 +60,75 @@ NEXT PHONE TEST:
 5. If native console already hooked but navigation still blocked, check
    journal read / timestamp / per-app ID; do not just raise watchdog timeout.
 No changes to BlockBend code or Android signer were made.
+
+LATEST PHONE REPORT — 2026-10-10 20:33 UTC: NATIVE-ONLY GAME SUCCESS + ROTATION BUG
+---------------------------------------------------------------------------
+The USER TESTED the new bridge fix on a real Galaxy S25 Ultra. SUCCESS:
+native-logger-game-id-ready 20:33:05.030, native-console-hook-installed
+20:33:05.083, native-console-before-game 20:33:05.136, actual
+webview-navigation-started 20:33:05.149, finished 20:33:05.195.
+Native-only means WebCask page debug/touch/focus scripts were absent but
+Tauri WebViewWindowBuilder STILL injects its own Tauri/Wry JS.
+
+NATIVE CONSOLE ROOT CAUSE ATTRIBUTION:
+Five repeated anonymous "Script error." messages are now named:
+  Uncaught TypeError: Cannot redefine property: postMessage
+  Uncaught TypeError: Cannot redefine property: metadata
+  Uncaught TypeError: Cannot redefine property: __TAURI_PATTERN__
+  Uncaught TypeError: Cannot redefine property: path
+  Uncaught TypeError: Cannot redefine property: __TAURI_EVENT_PLUGIN_INTERNALS__
+These are Tauri bootstrap properties, observed when all WEBcask custom page
+scripts are OFF. Therefore they are not shown as Defender Engine/BlockBend
+renderer errors. Another Tauri Android discussion reported essentially the
+same property redefinition errors:
+  https://github.com/orgs/tauri-apps/discussions/11699
+A Wry-related upstream injection issue is possible; exact root cause of
+duplicate execution is not yet identified. Do not falsely claim exceptions
+are suppressed or eliminated. The native console now classifies those exact
+errors as native-tauri-injection-conflict with honest UI diagnosis.
+
+ROTATION BLACK SCREEN:
+User rotated screen after successful game load. Log immediately showed
+native-activity-paused, native-activity-destroyed followed by repeated
+native-activity-created/native-webview-created; replacement activities showed
+100% loading but NOT real game navigation, and screen turned black.
+CAUSE: .github/scripts/setup-webcask-android.py registered the secondary
+WebCaskActivity with only exported=false, no android:configChanges.
+Rotating Android therefore destroys live game WebView and its state.
+
+PATCHES ON MAIN (UNBUILT / PHONE-UNVERIFIED AT HANDOFF TIME):
+1) setup-webcask-android.py adds AND VERIFY-READS Android manifest flags
+   orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard
+   for secondary WebCaskActivity. Does not change primary MainActivity.
+2) WebCaskActivity.kt holds the Activity's WebView instance and overrides
+   onConfigurationChanged to log native-configuration-changed and
+   requestLayout/invalidate SAME WebView. Clears ref on onDestroy. Does not
+   force reload or synthesize fake JS events.
+3) Kotlin WebChromeClient logs specific property redefinitions as
+   native-tauri-injection-conflict, not undifferentiated native-console-error.
+4) src/main.ts shows explicit classification message. Tests in
+   .github/scripts/check-webcask-diagnostics.cjs protect flags, handler
+   presence and error classification. CI workflows already call Node test.
+5) README updated. Latest implementation commit before handoff:
+   c525083eff0704ad760d5ba3232857c1a5e4134a.
+
+NEXT TEST:
+- Confirm a new Android CI build and APK asset actually succeeded; install
+  IN PLACE with existing signing identity. Preserve imported BlockBend and
+  saves.
+- Clear old diagnostics, launch BlockBend normally or native-only.
+- Rotate portrait->landscape->portrait while game is open.
+- EXPECT native-configuration-changed rather than native-activity-destroyed/
+  created. WebView should remain showing game and retain state. Check canvas
+  dimensions and touch mappings after rotation in normal mode.
+- If black screen remains, inspect whether Android still recreated the
+  Activity (flags ineffective/other config changes), or whether WebGL context/
+  canvas became invalid WITHOUT an Activity restart. Distinguish these cases
+  before editing rendering system.
+- Known five Tauri property errors may still show as
+  native-tauri-injection-conflict; if impactful, investigate Wry Android
+  injection and consider an independent raw Android WebView game runner.
+- Verify CI and device behavior; source patch alone is not proof of success.
 
 READ THIS FIRST (FOR THE NEXT CHAT / DEVELOPER)
 ------------------------------------------------
