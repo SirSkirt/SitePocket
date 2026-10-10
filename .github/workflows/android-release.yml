@@ -50,6 +50,8 @@ jobs:
           node-version: '22'
       - name: Install JS dependencies
         run: npm install --no-audit --no-fund
+      - name: Test WebCask page diagnostics for false attribution
+        run: node .github/scripts/check-webcask-diagnostics.cjs
       - name: Prepare Android branding and increment build version
         shell: bash
         run: |
