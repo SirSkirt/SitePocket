@@ -3,11 +3,11 @@ SITEPOCKET + WEBCASK RUNTIME — PROJECT HANDOFF
 Updated: 2026-10-10 (native console ordering and instrumentation isolation)
 Repository: https://github.com/SirSkirt/SitePocket
 Branch: main
-Last implementation commit before this handoff update: c8c6eddb40fff26d01e54fe26be9dae544054e6a
-Status: Game View regression affects BOTH Windows and Android; shared
-Game View recovery patch and cross-platform CI tests pushed. Earlier
-Android Activity rotation patch and five Tauri/Wry bootstrap conflicts
-remain separate. CI builds and device tests after latest patch UNVERIFIED.
+Last implementation commit before this handoff update: 34d91ad961c32c95e6b829864c51483563400f7b
+Status: Both Windows/Android CI failed pre-build in self-authored
+Game View test harness (missing synthetic click stopPropagation); fixed
+and V8-sandbox-tested 21 assertions; GitHub release builds not yet
+verified. Earlier Android rotation fix and Tauri bootstrap errors remain.
 
 LATEST PHONE REPORT — 2026-10-10 20:22 UTC (NATIVE-ONLY)
 ------------------------------------------------------
@@ -201,6 +201,36 @@ NEXT TEST:
    patch is NOT evidence of working app.
 7. Existing five Tauri property-redefinition errors in Android native
    console remain an independent framework issue, not game renderer.
+
+GITHUB ACTIONS REGRESSION-TEST HARNESS FIX — 2026-10-10 21:42 -03
+----------------------------------------------------------------
+User supplied screenshots of BOTH failing workflows:
+ Android run https://github.com/SirSkirt/SitePocket/actions/runs/38086343978/job/114313537920
+ Windows run https://github.com/SirSkirt/SitePocket/actions/runs/38086332772/job/114313503929
+Both stopped during:
+  Test shared Game View canvas detection and recovery
+  TypeError: e.stopPropagation is not a function
+  game_focus.js:175:11 at test harness Element.dispatch(...) line 63
+No Android APK or Windows NSIS build steps executed in THOSE failed runs.
+This is NOT evidence of a Game View runtime bug or an Android/Windows
+compilation error. Root cause was self-authored simulated DOM click event
+sent as plain {} without browser Event.stopPropagation method.
+
+FIX: .github/scripts/check-webcask-game-focus.cjs Element.dispatch now
+constructs a browser-like click event, with type/target/currentTarget,
+stopPropagation, preventDefault, stopImmediatePropagation and status flags.
+Toggle scenario asserts stopPropagation was called. No game or production
+runtime code was changed by this immediate repair.
+Implementation commit: 34d91ad961c32c95e6b829864c51483563400f7b.
+
+Validation in this ChatGPT session: fetched live production game_focus.js
+and updated regression script from GitHub and executed entire test logic
+under a V8 sandbox with Node assert/fs/vm shims. All 21 assertions
+succeeded, including DOM-start, Toggle, delayed/replaced canvases, roots,
+and small viewports. THIS IS NOT THE REAL NODE/GITHUB ACTIONS RUN.
+Build/Release CI outcome AFTER fix still requires verification, and no
+APK/NSIS artifact is yet confirmed for this change. Both push-triggered
+workflows should re-run using the corrected test.
 
 READ THIS FIRST (FOR THE NEXT CHAT / DEVELOPER)
 ------------------------------------------------
