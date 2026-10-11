@@ -60,7 +60,24 @@ function browser(startBeforeDomReady = false) {
       this.listeners[name] = (this.listeners[name] || []).filter(x => x !== fn);
     }
     dispatch(name, arg = {}) {
-      for (const fn of this.listeners[name] || []) fn(arg);
+      // The harness must emulate a real DOM event. The Game View Toggle
+      // intentionally calls stopPropagation(); synthetic plain objects did
+      // not provide it, causing BOTH release workflows to fail before build.
+      const event = Object.assign({
+        type: name, target: this, currentTarget: this,
+        defaultPrevented: false, propagationStopped: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.propagationStopped = true; },
+        stopImmediatePropagation() {
+          this.propagationStopped = true;
+          this.immediatePropagationStopped = true;
+        }
+      }, arg);
+      for (const fn of this.listeners[name] || []) {
+        fn(event);
+        if (event.immediatePropagationStopped) break;
+      }
+      return event;
     }
   }
 
@@ -171,7 +188,9 @@ function browser(startBeforeDomReady = false) {
   assert.ok(b.badge(), 'manual Toggle and Pick remain available');
   assert.equal(b.badge().children.filter(x => x.tagName === 'BUTTON').length, 2);
   const toggle = b.badge().children.find(x => x.textContent === 'Toggle');
-  toggle.dispatch('click');
+  const firstClick = toggle.dispatch('click');
+  assert.equal(firstClick.propagationStopped, true,
+    'Toggle must stop click propagation just like a browser event');
   assert.equal(b.html.getAttribute('data-webcask-game'), null);
   assert.equal(canvas.getAttribute('style'), 'border:1px solid red');
   toggle.dispatch('click');
